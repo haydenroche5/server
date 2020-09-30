@@ -6985,7 +6985,16 @@ static int binlog_log_row_online_alter(TABLE* table,
   THD *thd= table->in_use;
 
   if (!table->online_alter_cache)
-    table->online_alter_cache= thd->binlog_setup_cache_data();
+  {
+    auto *cache_mngr= online_alter_binlog_get_cache_mngr(thd, table);
+    // Use transaction cache directly, if it is not multi-transaction mode
+    table->online_alter_cache= binlog_get_cache_data(cache_mngr,
+                                        !thd->in_multi_stmt_transaction_mode());
+
+    trans_register_ha(thd, false, binlog_hton, 0);
+    if (thd->in_multi_stmt_transaction_mode())
+      trans_register_ha(thd, true, binlog_hton, 0);
+  }
 
   // We need to log all columns for the case if alter table changes primary key.
   table->use_all_columns();

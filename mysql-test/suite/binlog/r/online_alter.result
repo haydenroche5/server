@@ -163,7 +163,7 @@ set autocommit = 1;
 set autocommit = 0;
 start transaction;
 update t1 set b= 7007 where a = 7;
-update t1 set a= 8 where a = 8 or a = 9;
+update t1 set a= 8, b= 8008 where a = 8 or a = 9 order by a;
 ERROR 23000: Duplicate entry '8' for key 'PRIMARY'
 commit;
 set autocommit = 1;
@@ -187,29 +187,30 @@ a	b
 3	3003
 4	4004
 5	5005
-6	6006
+6	66
 7	7007
 8	88
 9	99
 #
-# test primary key change
+# MYISAM. Only Inserts can be tested.
 #
-create or replace table t1 (a int primary key, b int) engine=innodb;
-insert t1 values (1, 11);
-insert t1 values (2, 22);
+create or replace table t1 (a int) engine=myisam;
+insert t1 values (5);
 connection con2;
 set debug_sync= 'now WAIT_FOR ended';
 connection default;
 set debug_sync= 'alter_table_copy_end SIGNAL ended WAIT_FOR end';
-alter table t1 drop primary key, add primary key(b),
-algorithm= copy, lock= none;
+alter table t1 add b int NULL, algorithm= copy, lock= none;
 connection con2;
+insert into t1 values (123), (456), (789);
 set debug_sync= 'now SIGNAL end';
 connection default;
 select * from t1;
 a	b
-1	11
-2	22
+5	NULL
+123	NULL
+456	NULL
+789	NULL
 # Cleanup
 set debug_sync= 'reset';
 drop table t1;

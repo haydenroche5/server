@@ -11397,12 +11397,13 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
     rpl_group_info rgi(&rli);
     RPL_TABLE_LIST rpl_table(to, TL_WRITE, from, table_event.get_table_def(),
                              copy, copy_end);
+    Cache_flip_event_log *binlog= from->s->online_alter_binlog;
     rgi.thd= thd;
     rgi.tables_to_lock= &rpl_table;
 
     rgi.m_table_map.set_table(from->s->table_map_id, to);
 
-    DBUG_ASSERT(from->s->online_alter_binlog->is_open());
+    DBUG_ASSERT(binlog->is_open());
 
     rli.relay_log.description_event_for_exec=
                                             new Format_description_log_event(4);
@@ -11410,15 +11411,16 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
     // We restore bitmaps, because update event is going to mess up with them.
     to->default_column_bitmaps();
 
-    error= online_alter_read_from_binlog(thd, &rgi, from->s->online_alter_binlog);
-    DBUG_ASSERT(!error);
+    error= online_alter_read_from_binlog(thd, &rgi, binlog);
 
+    int lock_error=
+        thd->mdl_context.upgrade_shared_lock(from->mdl_ticket, MDL_EXCLUSIVE,
+                                             thd->variables.lock_wait_timeout);
+    if (!error)
+      error= lock_error;
 
-    thd->mdl_context.upgrade_shared_lock(from->mdl_ticket, MDL_EXCLUSIVE,
-                                         thd->variables.lock_wait_timeout);
-
-    error= online_alter_read_from_binlog(thd, &rgi, from->s->online_alter_binlog);
-    DBUG_ASSERT(!error);
+    if (!error)
+      error= online_alter_read_from_binlog(thd, &rgi, binlog);
   }
   // TODO handle m_vers_from_plain
 

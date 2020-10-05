@@ -258,6 +258,32 @@ set debug_sync= 'now SIGNAL end';
 --reap
 select * from t1;
 
+--echo # Test incompatible changes
+create or replace table t1 (a int primary key, b int) engine=innodb;
+insert t1 values (1, 22);
+insert t1 values (3, 44);
+
+--connection con2
+--send
+set debug_sync= 'now WAIT_FOR ended';
+
+--connection default
+set debug_sync= 'alter_table_copy_end SIGNAL ended WAIT_FOR end';
+
+--send
+alter table t1 drop primary key, add primary key(b),
+            algorithm= copy, lock= none;
+
+--connection con2
+--reap
+update t1 set b= 44 where a = 1;
+set debug_sync= 'now SIGNAL end';
+
+--connection default
+--error ER_DUP_ENTRY
+--reap
+select * from t1;
+
 --echo # Cleanup
 set debug_sync= 'reset';
 drop table t1;

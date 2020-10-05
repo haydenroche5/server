@@ -5849,7 +5849,8 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
 
 err:
   restore_empty_query_table_list(thd->lex);
-  rgi->slave_close_thread_tables(thd);
+  if (rgi->tables_to_lock_count)
+    rgi->slave_close_thread_tables(thd);
   DBUG_RETURN(error);
 }
 

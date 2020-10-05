@@ -11422,7 +11422,6 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
     if (!error)
       error= online_alter_read_from_binlog(thd, &rgi, binlog);
   }
-  // TODO handle m_vers_from_plain
 
   if (error > 0 && !from->s->tmp_table)
   {

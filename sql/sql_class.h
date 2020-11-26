@@ -2866,6 +2866,7 @@ public:
 
 #ifndef MYSQL_CLIENT
   binlog_cache_mngr *  binlog_setup_trx_data();
+  binlog_cache_data *  binlog_setup_cache_data();
   /*
     If set, tell binlog to store the value as query 'xid' in the next
     Query_log_event

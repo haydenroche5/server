@@ -54,6 +54,7 @@
 #include "sql_audit.h"
 #include "sql_sequence.h"
 #include "tztime.h"
+#include "rpl_rli.h"
 #include "sql_insert.h"                // binlog_drop_table
 #include "ddl_log.h"
 #include "debug.h"                     // debug_crash_here()
@@ -79,7 +80,7 @@ static int copy_data_between_tables(THD *, TABLE *,TABLE *,
                                     List<Create_field> &, bool, uint, ORDER *,
                                     ha_rows *, ha_rows *,
                                     Alter_info::enum_enable_or_disable,
-                                    Alter_table_ctx *);
+                                    Alter_table_ctx *, bool);
 static int append_system_key_parts(THD *thd, HA_CREATE_INFO *create_info,
                                    Key *key);
 static int mysql_prepare_create_table(THD *, HA_CREATE_INFO *, Alter_info *,
@@ -1945,6 +1946,7 @@ bool log_drop_table(THD *thd, const LEX_CSTRING *db_name,
 
   if (mysql_bin_log.is_open())
   {
+
     query.length(0);
     query.append(STRING_WITH_LEN("DROP "));
     if (temporary_table)
@@ -1961,7 +1963,7 @@ bool log_drop_table(THD *thd, const LEX_CSTRING *db_name,
       in the binary log. We log this for non temporary tables, as the slave
       may use a filter to ignore queries for a specific database.
     */
-    error= thd->binlog_query(THD::STMT_QUERY_TYPE,
+    error= thd->binlog_query(THD::STMT_QUERY_TYPE, 
                              query.ptr(), query.length(),
                              FALSE, FALSE, temporary_table, 0) > 0;
   }
@@ -4220,7 +4222,7 @@ handler *mysql_create_frm_image(THD *thd, const LEX_CSTRING &db,
     {
       if (key->type == Key::FOREIGN_KEY)
       {
-        my_error(ER_FEATURE_NOT_SUPPORTED_WITH_PARTITIONING, MYF(0), 
+        my_error(ER_FEATURE_NOT_SUPPORTED_WITH_PARTITIONING, MYF(0),
                  "FOREIGN KEY");
         goto err;
       }
@@ -9452,6 +9454,7 @@ bool mysql_alter_table(THD *thd, const LEX_CSTRING *new_db,
   MDL_request target_mdl_request;
   MDL_ticket *mdl_ticket= 0;
   Alter_table_prelocking_strategy alter_prelocking_strategy;
+  bool online= order == NULL && !opt_bootstrap;
   TRIGGER_RENAME_PARAM trigger_param;
 
   /*
@@ -9533,6 +9536,10 @@ bool mysql_alter_table(THD *thd, const LEX_CSTRING *new_db,
     has been already processed.
   */
   table_list->required_type= TABLE_TYPE_NORMAL;
+  if (online)
+  {
+    table_list->lock_type= TL_READ;
+  }
 
   DEBUG_SYNC(thd, "alter_table_before_open_tables");
 
@@ -10370,7 +10377,8 @@ do_continue:;
   if (!table->s->tmp_table)
   {
     // COPY algorithm doesn't work with concurrent writes.
-    if (alter_info->requested_lock == Alter_info::ALTER_TABLE_LOCK_NONE)
+    if (!online &&
+        alter_info->requested_lock == Alter_info::ALTER_TABLE_LOCK_NONE)
     {
       my_error(ER_ALTER_OPERATION_NOT_SUPPORTED_REASON, MYF(0),
                "LOCK=NONE",
@@ -10378,6 +10386,9 @@ do_continue:;
                "LOCK=SHARED");
       goto err_new_table_cleanup;
     }
+
+    if (alter_info->requested_lock == Alter_info::ALTER_TABLE_LOCK_EXCLUSIVE)
+      online= false;
 
     // If EXCLUSIVE lock is requested, upgrade already.
     if (alter_info->requested_lock == Alter_info::ALTER_TABLE_LOCK_EXCLUSIVE &&
@@ -10494,7 +10505,7 @@ do_continue:;
                                  alter_info->create_list, ignore,
                                  order_num, order, &copied, &deleted,
                                  alter_info->keys_onoff,
-                                 &alter_ctx))
+                                 &alter_ctx, online))
       goto err_new_table_cleanup;
   }
   else
@@ -10962,13 +10973,58 @@ bool mysql_trans_commit_alter_copy_data(THD *thd)
 }
 
 
+static int online_alter_read_from_binlog(THD *thd, rpl_group_info *rgi,
+                                         MYSQL_BIN_LOG *binlog, IO_CACHE *log)
+{
+  MEM_ROOT event_mem_root;
+  Query_arena backup_arena;
+  Query_arena event_arena(&event_mem_root, Query_arena::STMT_INITIALIZED);
+  init_sql_alloc(key_memory_gdl, &event_mem_root,
+                 MEM_ROOT_BLOCK_SIZE, 0, MYF(0));
+
+  int error= 0;
+
+  do
+  {
+    mysql_mutex_lock(binlog->get_log_lock());
+    const auto *descr_event= rgi->rli->relay_log.description_event_for_exec;
+    auto *ev= Log_event::read_log_event(log, descr_event, false);
+    mysql_mutex_unlock(binlog->get_log_lock());
+    if (!ev)
+      break;
+
+    ev->thd= thd;
+    thd->set_n_backup_active_arena(&event_arena, &backup_arena);
+    error= ev->apply_event(rgi);
+    thd->restore_active_arena(&event_arena, &backup_arena);
+
+    event_arena.free_items();
+    free_root(&event_mem_root, MYF(MY_KEEP_PREALLOC));
+    if (ev != rgi->rli->relay_log.description_event_for_exec)
+      delete ev;
+  }
+  while(!error);
+
+  return error;
+}
+
+static void online_alter_cleanup_binlog(THD *thd, TABLE_SHARE *s)
+{
+  if (!s->online_alter_binlog)
+    return;
+  s->online_alter_binlog->reset_logs(thd, false, NULL, 0, 0);
+  s->online_alter_binlog->cleanup();
+  s->online_alter_binlog->~MYSQL_BIN_LOG();
+  s->online_alter_binlog= NULL;
+}
+
 static int
 copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
 			 List<Create_field> &create, bool ignore,
 			 uint order_num, ORDER *order,
 			 ha_rows *copied, ha_rows *deleted,
                          Alter_info::enum_enable_or_disable keys_onoff,
-                         Alter_table_ctx *alter_ctx)
+                         Alter_table_ctx *alter_ctx, bool online)
 {
   int error= 1;
   Copy_field *copy= NULL, *copy_end;
@@ -10996,11 +11052,48 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
   /* Two or 3 stages; Sorting, copying data and update indexes */
   thd_progress_init(thd, 2 + MY_TEST(order));
 
+  uint online_alter_sync_period= 0;
+  if (online)
+  {
+    from->s->online_alter_binlog= new (alloc_root(thd->mem_root,
+                                                  sizeof (MYSQL_BIN_LOG)))
+                                 MYSQL_BIN_LOG(&online_alter_sync_period);
+    if (!from->s->online_alter_binlog)
+      DBUG_RETURN(1);
+
+    from->s->online_alter_binlog->is_relay_log= true;
+    from->s->online_alter_binlog->init_pthread_objects();
+
+    char log_name[FN_REFLEN];
+
+    // path to frm without extension
+    memcpy(log_name, from->s->normalized_path.str,
+           from->s->normalized_path.length);
+    strncpy(log_name + from->s->normalized_path.length, "-online-binlog",
+            FN_REFLEN - from->s->normalized_path.length);
+
+    mysql_mutex_lock(from->s->online_alter_binlog->get_log_lock());
+    error= from->s->online_alter_binlog->open_index_file(NULL, log_name, TRUE) ||
+           from->s->online_alter_binlog->open(log_name, 0, 0, SEQ_READ_APPEND,
+                                              ULONG_MAX, 1, TRUE);
+    mysql_mutex_unlock(from->s->online_alter_binlog->get_log_lock());
+
+    DBUG_ASSERT(!error);
+    if (error)
+    {
+      online_alter_cleanup_binlog(thd, from->s);
+      DBUG_RETURN(1);
+    }
+
+    from->mdl_ticket->downgrade_lock(MDL_SHARED_UPGRADABLE);
+  }
+
   if (!(copy= new (thd->mem_root) Copy_field[to->s->fields]))
     DBUG_RETURN(-1);
 
   if (mysql_trans_prepare_alter_copy_data(thd))
   {
+    online_alter_cleanup_binlog(thd, from->s);
     delete [] copy;
     DBUG_RETURN(-1);
   }
@@ -11008,6 +11101,7 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
   /* We need external lock before we can disable/enable keys */
   if (to->file->ha_external_lock(thd, F_WRLCK))
   {
+    online_alter_cleanup_binlog(thd, from->s);
     /* Undo call to mysql_trans_prepare_alter_copy_data() */
     ha_enable_transaction(thd, TRUE);
     delete [] copy;
@@ -11150,6 +11244,8 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
   if (!ignore) /* for now, InnoDB needs the undo log for ALTER IGNORE */
     to->file->extra(HA_EXTRA_BEGIN_ALTER_COPY);
 
+  DEBUG_SYNC(thd, "alter_table_copy_start");
+
   while (likely(!(error= info.read_record())))
   {
     if (unlikely(thd->killed))
@@ -11284,14 +11380,11 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
     thd->get_stmt_da()->inc_current_row_for_warning();
   }
 
+  DEBUG_SYNC(thd, "alter_table_copy_end");
+
   THD_STAGE_INFO(thd, stage_enabling_keys);
   thd_progress_next_stage(thd);
 
-  if (error > 0 && !from->s->tmp_table)
-  {
-    /* We are going to drop the temporary table */
-    to->file->extra(HA_EXTRA_PREPARE_FOR_DROP);
-  }
   if (unlikely(to->file->ha_end_bulk_insert()) && error <= 0)
   {
     /* Give error, if not already given */
@@ -11299,12 +11392,63 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
       to->file->print_error(my_errno,MYF(0));
     error= 1;
   }
+
   bulk_insert_started= 0;
   if (!ignore)
     to->file->extra(HA_EXTRA_END_ALTER_COPY);
 
   cleanup_done= 1;
   to->file->extra(HA_EXTRA_NO_IGNORE_DUP_KEY);
+
+  if (online && error < 0)
+  {
+    Table_map_log_event table_event(thd, from, from->s->table_map_id,
+                                    from->file->has_transactions());
+    Relay_log_info rli(false);
+    rpl_group_info rgi(&rli);
+    RPL_TABLE_LIST rpl_table(to, TL_WRITE, from, table_event.get_table_def(),
+                             copy, copy_end);
+    rgi.thd= thd;
+    rgi.tables_to_lock= &rpl_table;
+
+    rgi.m_table_map.set_table(from->s->table_map_id, to);
+
+    DBUG_ASSERT(from->s->online_alter_binlog->is_open());
+
+    LOG_INFO linfo;
+    error= from->s->online_alter_binlog->find_log_pos(&linfo, NULL, 1);
+    DBUG_ASSERT(error == 0); // TODO handle error
+
+    IO_CACHE log;
+    const char *errmsg;
+    File file= open_binlog(&log, linfo.log_file_name, &errmsg);
+    DBUG_ASSERT(file); // TODO handle
+
+    rli.relay_log.description_event_for_exec=
+                                            new Format_description_log_event(4);
+
+    // We restore bitmaps, because update event is going to mess up with them.
+    to->default_column_bitmaps();
+
+    error= online_alter_read_from_binlog(thd, &rgi, from->s->online_alter_binlog,
+                                         &log);
+    DBUG_ASSERT(!error);
+
+
+    thd->mdl_context.upgrade_shared_lock(from->mdl_ticket, MDL_EXCLUSIVE,
+                                         thd->variables.lock_wait_timeout);
+
+    error= online_alter_read_from_binlog(thd, &rgi, from->s->online_alter_binlog,
+                                         &log);
+    DBUG_ASSERT(!error);
+  }
+  // TODO handle m_vers_from_plain
+
+  if (error > 0 && !from->s->tmp_table)
+  {
+    /* We are going to drop the temporary table */
+    to->file->extra(HA_EXTRA_PREPARE_FOR_DROP);
+  }
 
   DEBUG_SYNC(thd, "copy_data_between_tables_before_reset_backup_lock");
   if (backup_reset_alter_copy_lock(thd))
@@ -11318,6 +11462,8 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
     (void) to->file->ha_end_bulk_insert();
 
 /* Free resources */
+  online_alter_cleanup_binlog(thd, from->s);
+
   if (init_read_record_done)
     end_read_record(&info);
   delete [] copy;

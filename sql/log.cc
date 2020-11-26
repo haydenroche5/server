@@ -2116,8 +2116,47 @@ int binlog_commit(THD *thd, bool all, bool ro_1pc)
   PSI_stage_info org_stage;
   DBUG_ENTER("binlog_commit");
 
-  binlog_cache_mngr *const cache_mngr= thd->binlog_get_cache_mngr();
+  bool is_ending_transaction= ending_trans(thd, all);
+  for (TABLE *table= thd->open_tables; table; table= table->next)
+  {
+    if (!table->online_alter_cache)
+      continue;
+    auto *binlog= table->s->online_alter_binlog;
+    DBUG_ASSERT(binlog);
+    
+    error= binlog_flush_pending_rows_event(thd,
+                                           /*
+                                             do not set STMT_END for last event
+                                             to leave table open in altering thd
+                                           */
+                                           false,
+                                           true,
+                                           binlog,
+                                           table->online_alter_cache);
+    if (unlikely(error))
+      DBUG_RETURN(error);
 
+    mysql_mutex_lock(binlog->get_log_lock());
+    error= binlog->write_cache(thd, &table->online_alter_cache->cache_log);
+    if (!error)
+      error= binlog->flush_and_sync(NULL);
+    mysql_mutex_unlock(binlog->get_log_lock());
+
+    table->online_alter_cache->reset();
+    delete table->online_alter_cache;
+    table->online_alter_cache= NULL;
+
+    if (error)
+    {
+      my_error(ER_ERROR_ON_WRITE, MYF(ME_ERROR_LOG), binlog->get_name(), errno);
+      DBUG_RETURN(error);
+    }
+  }
+
+  binlog_cache_mngr *const cache_mngr= thd->binlog_get_cache_mngr();
+  /*
+    cache_mngr can be NULL in case if binlog logging is disabled.
+  */
   if (!cache_mngr)
   {
     DBUG_ASSERT(WSREP(thd) ||
@@ -2165,7 +2204,7 @@ int binlog_commit(THD *thd, bool all, bool ro_1pc)
      - We are in a transaction and a full transaction is committed.
     Otherwise, we accumulate the changes.
   */
-  if (likely(!error) && ending_trans(thd, all))
+  if (likely(!error) && is_ending_transaction)
   {
     bool is_xa_prepare= is_preparing_xa(thd);
 
@@ -2204,6 +2243,15 @@ int binlog_commit(THD *thd, bool all, bool ro_1pc)
 static int binlog_rollback(handlerton *hton, THD *thd, bool all)
 {
   DBUG_ENTER("binlog_rollback");
+
+  for (TABLE *table= thd->open_tables; table; table= table->next)
+  {
+    if (!table->online_alter_cache)
+      continue;
+    table->online_alter_cache->reset();
+    delete table->online_alter_cache;
+    table->online_alter_cache= NULL;
+  }
 
   int error= 0;
   binlog_cache_mngr *const cache_mngr= thd->binlog_get_cache_mngr();
@@ -3384,7 +3432,7 @@ MYSQL_BIN_LOG::MYSQL_BIN_LOG(uint *sync_period)
     We don't want to initialize locks here as such initialization depends on
     safe_mutex (when using safe_mutex) which depends on MY_INIT(), which is
     called only in main(). Doing initialization here would make it happen
-    before main().
+    before main(). init_pthread_objects() can be called for that purpose.
   */
   index_file_name[0] = 0;
   bzero((char*) &index_file, sizeof(index_file));
@@ -4139,7 +4187,8 @@ int MYSQL_BIN_LOG::find_log_pos(LOG_INFO *linfo, const char *log_name,
                        log_name ? log_name : "NULL", full_log_name));
 
   /* As the file is flushed, we can't get an error here */
-  (void) reinit_io_cache(&index_file, READ_CACHE, (my_off_t) 0, 0, 0);
+  error= reinit_io_cache(&index_file, READ_CACHE, (my_off_t) 0, 0, 0);
+  DBUG_ASSERT(!error);
 
   for (;;)
   {
@@ -5742,6 +5791,19 @@ bool stmt_has_updated_non_trans_table(const THD* thd)
   binlog_hton, which has internal linkage.
 */
 
+binlog_cache_data *THD::binlog_setup_cache_data()
+{
+  auto *cache= new binlog_cache_data();
+  cache->set_binlog_cache_info(max_binlog_stmt_cache_size,
+                               &binlog_stmt_cache_use,
+                               &binlog_stmt_cache_disk_use);
+  if (!cache ||
+      open_cached_file(&cache->cache_log, mysql_tmpdir,
+                       LOG_PREFIX, (size_t)binlog_cache_size, MYF(MY_WME)))
+    return NULL;
+  return cache;
+}
+
 binlog_cache_mngr *THD::binlog_setup_trx_data()
 {
   DBUG_ENTER("THD::binlog_setup_trx_data");
@@ -6185,7 +6247,7 @@ Event_log::flush_and_set_pending_rows_event(THD *thd,
                                                 bool is_transactional)
 {
   DBUG_ENTER("MYSQL_BIN_LOG::flush_and_set_pending_rows_event(event)");
-  DBUG_ASSERT(WSREP_EMULATE_BINLOG(thd) || mysql_bin_log.is_open());
+  DBUG_ASSERT(WSREP_EMULATE_BINLOG(thd) || is_open());
   DBUG_PRINT("enter", ("event: %p", event));
 
   DBUG_PRINT("info", ("cache_mngr->pending(): %p", cache_data->pending()));
@@ -11890,7 +11952,7 @@ void wsrep_thd_binlog_stmt_rollback(THD * thd)
   binlog_cache_mngr *const cache_mngr= thd->binlog_get_cache_mngr();
   if (cache_mngr)
   {
-    thd->binlog_remove_pending_rows_event(TRUE, TRUE);
+    MYSQL_BIN_LOG::remove_pending_rows_event(thd, &cache_mngr->trx_cache);
     cache_mngr->stmt_cache.reset();
   }
   DBUG_VOID_RETURN;

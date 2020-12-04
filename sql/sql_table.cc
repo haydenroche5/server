@@ -11075,6 +11075,7 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
     }
 
     from->mdl_ticket->downgrade_lock(MDL_SHARED_UPGRADABLE);
+    DEBUG_SYNC(thd, "alter_table_online_downgraded");
   }
 
   if (!(copy= new (thd->mem_root) Copy_field[to->s->fields]))
@@ -11412,6 +11413,8 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
     to->default_column_bitmaps();
 
     error= online_alter_read_from_binlog(thd, &rgi, binlog);
+
+    DEBUG_SYNC(thd, "alter_table_online_before_lock");
 
     int lock_error=
         thd->mdl_context.upgrade_shared_lock(from->mdl_ticket, MDL_EXCLUSIVE,

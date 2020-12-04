@@ -284,6 +284,46 @@ set debug_sync= 'now SIGNAL end';
 --reap
 select * from t1;
 
+
+--echo # Test log read after EXCLUSIVE lock
+--echo # Transaction is started before ALTER, and UPDATE is made.
+--echo # Then more UPDATEs.
+
+create or replace table t1 (a int primary key, b int) engine=innodb;
+insert t1 values (1, 11);
+insert t1 values (2, 22);
+insert t1 values (3, 33);
+insert t1 values (4, 44);
+insert t1 values (5, 55);
+
+set debug_sync= 'alter_table_online_before_lock SIGNAL locking WAIT_FOR end';
+set debug_sync= 'alter_table_online_downgraded SIGNAL downgraded';
+
+--send
+alter table t1 drop primary key, add primary key(b),
+            algorithm= copy, lock= none;
+
+--connection con2
+begin;
+
+set debug_sync= 'now WAIT_FOR downgraded';
+update t1 set b= 111 where a = 1;
+
+set debug_sync= 'now WAIT_FOR locking';
+set debug_sync= 'now SIGNAL end';
+
+update t1 set b= 222 where a = 2;
+update t1 set b= 333 where a = 3;
+update t1 set b= 444 where a = 4;
+
+commit;
+
+update t1 set b= 555 where a = 5;
+
+--connection default
+--reap
+select * from t1;
+
 --echo #
 --echo # Test system versioning
 --echo #

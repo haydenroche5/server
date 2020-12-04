@@ -34,9 +34,9 @@ insert into t1 values (123), (456), (789);
 set debug_sync= 'now SIGNAL end';
 connection default;
 Warnings:
-Error	1364	Field 'b' doesn't have a default value
-Error	1364	Field 'b' doesn't have a default value
-Error	1364	Field 'b' doesn't have a default value
+Warning	1364	Field 'b' doesn't have a default value
+Warning	1364	Field 'b' doesn't have a default value
+Warning	1364	Field 'b' doesn't have a default value
 select * from t1;
 a	b
 5	0

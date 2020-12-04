@@ -10994,9 +10994,12 @@ static int online_alter_read_from_binlog(THD *thd, rpl_group_info *rgi,
       break;
 
     ev->thd= thd;
+    bool abort_on_warning= thd->abort_on_warning;
+    thd->abort_on_warning= false;
     thd->set_n_backup_active_arena(&event_arena, &backup_arena);
     error= ev->apply_event(rgi);
     thd->restore_active_arena(&event_arena, &backup_arena);
+    thd->abort_on_warning= abort_on_warning;
 
     event_arena.free_items();
     free_root(&event_mem_root, MYF(MY_KEEP_PREALLOC));

@@ -2138,8 +2138,6 @@ int binlog_commit(THD *thd, bool all, bool ro_1pc)
 
     mysql_mutex_lock(binlog->get_log_lock());
     error= binlog->write_cache(thd, &table->online_alter_cache->cache_log);
-    if (!error)
-      error= binlog->flush_and_sync(NULL);
     mysql_mutex_unlock(binlog->get_log_lock());
 
     table->online_alter_cache->reset();

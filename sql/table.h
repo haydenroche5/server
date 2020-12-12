@@ -65,7 +65,7 @@ class derived_handler;
 class Pushdown_derived;
 struct Name_resolution_context;
 class Table_function_json_table;
-class MYSQL_BIN_LOG;
+class MYSQL_LOG;
 
 /*
   Used to identify NESTED_JOIN structures within a join (applicable only to
@@ -889,7 +889,7 @@ struct TABLE_SHARE
   plugin_ref default_part_plugin;
 #endif
 
-  MYSQL_BIN_LOG *online_alter_binlog;
+  Event_log *online_alter_binlog;
 
   /**
     System versioning and application-time periods support.

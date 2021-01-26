@@ -10974,7 +10974,7 @@ bool mysql_trans_commit_alter_copy_data(THD *thd)
 
 
 static int online_alter_read_from_binlog(THD *thd, rpl_group_info *rgi,
-                                         Event_log *binlog, IO_CACHE *log)
+                                         Cache_flip_event_log *log)
 {
   MEM_ROOT event_mem_root;
   Query_arena backup_arena;
@@ -10984,12 +10984,12 @@ static int online_alter_read_from_binlog(THD *thd, rpl_group_info *rgi,
 
   int error= 0;
 
+  IO_CACHE *log_file= log->flip();
+
   do
   {
-    mysql_mutex_lock(binlog->get_log_lock());
     const auto *descr_event= rgi->rli->relay_log.description_event_for_exec;
-    auto *ev= Log_event::read_log_event(log, descr_event, false);
-    mysql_mutex_unlock(binlog->get_log_lock());
+    auto *ev= Log_event::read_log_event(log_file, descr_event, false);
     if (!ev)
       break;
 
@@ -11014,7 +11014,7 @@ static void online_alter_cleanup_binlog(THD *thd, TABLE_SHARE *s)
     return;
   // s->online_alter_binlog->reset_logs(thd, false, NULL, 0, 0);
   s->online_alter_binlog->cleanup();
-  s->online_alter_binlog->~Event_log();
+  s->online_alter_binlog->~Cache_flip_event_log();
   s->online_alter_binlog= NULL;
 }
 
@@ -11054,26 +11054,15 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
 
   if (online)
   {
-    void *buf= alloc_root(thd->mem_root, sizeof (Event_log));
+    void *buf= alloc_root(thd->mem_root, sizeof (Cache_flip_event_log));
 
-   from->s->online_alter_binlog= new (buf) Event_log();
+   from->s->online_alter_binlog= new (buf) Cache_flip_event_log();
     if (!from->s->online_alter_binlog)
       DBUG_RETURN(1);
 
     from->s->online_alter_binlog->init_pthread_objects();
 
-    char log_name[FN_REFLEN];
-
-    // path to frm without extension
-    memcpy(log_name, from->s->normalized_path.str,
-           from->s->normalized_path.length);
-    strncpy(log_name + from->s->normalized_path.length, "-online-binlog",
-            FN_REFLEN - from->s->normalized_path.length);
-
-    mysql_mutex_lock(from->s->online_alter_binlog->get_log_lock());
-    error= from->s->online_alter_binlog->open(log_name, LOG_BIN, 0, 0,
-                                              SEQ_READ_APPEND);
-    mysql_mutex_unlock(from->s->online_alter_binlog->get_log_lock());
+    error= from->s->online_alter_binlog->open(WRITE_CACHE);
 
     DBUG_ASSERT(!error);
     if (error)
@@ -11418,16 +11407,14 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
     // We restore bitmaps, because update event is going to mess up with them.
     to->default_column_bitmaps();
 
-    error= online_alter_read_from_binlog(thd, &rgi, from->s->online_alter_binlog,
-                                         from->s->online_alter_binlog->get_log_file());
+    error= online_alter_read_from_binlog(thd, &rgi, from->s->online_alter_binlog);
     DBUG_ASSERT(!error);
 
 
     thd->mdl_context.upgrade_shared_lock(from->mdl_ticket, MDL_EXCLUSIVE,
                                          thd->variables.lock_wait_timeout);
 
-    error= online_alter_read_from_binlog(thd, &rgi, from->s->online_alter_binlog,
-                                         from->s->online_alter_binlog->get_log_file());
+    error= online_alter_read_from_binlog(thd, &rgi, from->s->online_alter_binlog);
     DBUG_ASSERT(!error);
   }
   // TODO handle m_vers_from_plain

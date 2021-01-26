@@ -2123,7 +2123,7 @@ int binlog_commit(THD *thd, bool all, bool ro_1pc)
       continue;
     auto *binlog= table->s->online_alter_binlog;
     DBUG_ASSERT(binlog);
-    
+
     error= binlog_flush_pending_rows_event(thd,
                                            /*
                                              do not set STMT_END for last event
@@ -2954,13 +2954,14 @@ void MYSQL_LOG::close(uint exiting)
   {
     end_io_cache(&log_file);
 
-    if (log_type == LOG_BIN && mysql_file_sync(log_file.file, MYF(MY_WME)) && ! write_error)
+    if (log_type == LOG_BIN && log_file.file >= 0 &&
+        mysql_file_sync(log_file.file, MYF(MY_WME)) && ! write_error)
     {
       write_error= 1;
       sql_print_error(ER_DEFAULT(ER_ERROR_ON_WRITE), name, errno);
     }
 
-    if (!(exiting & LOG_CLOSE_DELAYED_CLOSE) &&
+    if (!(exiting & LOG_CLOSE_DELAYED_CLOSE) && log_file.file >= 0 &&
         mysql_file_close(log_file.file, MYF(MY_WME)) && ! write_error)
     {
       write_error= 1;
@@ -3607,15 +3608,32 @@ bool MYSQL_BIN_LOG::open_index_file(const char *index_file_name_arg,
 }
 
 
-bool Event_log::open(const char *log_name, enum_log_type log_type,
+bool Event_log::open(const char *log_name,
                      const char *new_name, ulong next_file_number,
                      enum cache_type io_cache_type_arg)
 {
-  bool error= MYSQL_LOG::open(
+  bool error= false;
+  if (log_name || new_name)
+  {
+    error= MYSQL_LOG::open(
 #ifdef HAVE_PSI_INTERFACE
           0,
 #endif
-          log_name, log_type, new_name, next_file_number, io_cache_type_arg);
+          log_name, LOG_NORMAL, new_name, next_file_number, io_cache_type_arg);
+  }
+  else
+  {
+#ifdef HAVE_PSI_INTERFACE
+    /* Keep the key for reopen */
+    m_log_file_key= 0;
+#endif
+    error= init_io_cache(&log_file, -1, LOG_BIN_IO_SIZE,
+                         io_cache_type_arg, 0, 0,
+                         MYF(MY_WME | MY_NABP | MY_WAIT_IF_FULL));
+
+    log_state= LOG_OPENED;
+    inited= true;
+  }
   if (error)
     return error;
 
@@ -7430,7 +7448,7 @@ int Event_log::write_cache(THD *thd, IO_CACHE *cache)
   size_t val;
   size_t end_log_pos_inc= 0; // each event processed adds BINLOG_CHECKSUM_LEN 2 t
   uchar header[LOG_EVENT_HEADER_LEN];
-  CacheWriter writer(thd, &log_file, binlog_checksum_options, &crypto);
+  CacheWriter writer(thd, get_log_file(), binlog_checksum_options, &crypto);
 
   if (crypto.scheme)
   {
@@ -7455,7 +7473,7 @@ int Event_log::write_cache(THD *thd, IO_CACHE *cache)
     split.
   */
 
-  group= (size_t)my_b_tell(&log_file);
+  group= (size_t)my_b_tell(get_log_file());
   hdr_offs= carry= 0;
 
   do

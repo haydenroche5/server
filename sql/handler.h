@@ -642,6 +642,7 @@ given at all. */
 typedef ulonglong alter_table_operations;
 
 class Event_log;
+class Cache_flip_event_log;
 class binlog_cache_data;
 typedef bool Log_func(THD*, TABLE*, Event_log *, binlog_cache_data *, bool,
                       const uchar*, const uchar*);

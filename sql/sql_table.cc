@@ -10986,6 +10986,9 @@ static int online_alter_read_from_binlog(THD *thd, rpl_group_info *rgi,
 
   IO_CACHE *log_file= log->flip();
 
+  thd_progress_report(thd, 0, my_b_write_tell(log_file)
+                             / rgi->tables_to_lock->m_conv_table->s->reclength);
+
   do
   {
     const auto *descr_event= rgi->rli->relay_log.description_event_for_exec;
@@ -11005,6 +11008,9 @@ static int online_alter_read_from_binlog(THD *thd, rpl_group_info *rgi,
     free_root(&event_mem_root, MYF(MY_KEEP_PREALLOC));
     if (ev != rgi->rli->relay_log.description_event_for_exec)
       delete ev;
+    thd_progress_report(thd, my_b_tell(log_file)
+                             / rgi->tables_to_lock->m_conv_table->s->reclength,
+                        thd->progress.max_counter);
   }
   while(!error);
 
@@ -11053,7 +11059,7 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
   DBUG_ENTER("copy_data_between_tables");
 
   /* Two or 3 stages; Sorting, copying data and update indexes */
-  thd_progress_init(thd, 2 + MY_TEST(order));
+  thd_progress_init(thd, 2 + MY_TEST(order) + MY_TEST(online));
 
   if (online)
   {
@@ -11392,6 +11398,7 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
 
   if (online && error < 0)
   {
+    thd_progress_next_stage(thd);
     Table_map_log_event table_event(thd, from, from->s->table_map_id,
                                     from->file->has_transactions());
     Relay_log_info rli(false);

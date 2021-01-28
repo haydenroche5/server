@@ -2910,6 +2910,16 @@ int ha_savepoint(THD *thd, SAVEPOINT *sv)
   Ha_trx_info *ha_info= trans->ha_list;
   DBUG_ENTER("ha_savepoint");
 
+  if (!thd->online_alter_cache_list.empty())
+  {
+    push_warning(thd, Sql_condition::WARN_LEVEL_WARN,
+                 ER_CHECK_NOT_IMPLEMENTED,
+                 "Cannot set up a savepoint while ONLINE ALTER TABLE"
+                 " is in progress");
+    my_error(ER_CHECK_NOT_IMPLEMENTED, MYF(0), "SAVEPOINT");
+    DBUG_RETURN(1);
+  }
+
   for (; ha_info; ha_info= ha_info->next())
   {
     int err;

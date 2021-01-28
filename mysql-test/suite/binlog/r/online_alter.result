@@ -345,6 +345,43 @@ a	b
 3	44
 6	77
 8	99
+#
+# Test ROLLBACK TO SAVEPOINT
+#
+create or replace table t1 (a int) engine=innodb;
+insert t1 values (1), (2);
+create or replace table t2 (a int) engine=innodb;
+insert t2 values (1), (2);
+connection con2;
+begin;
+update t2 set a= 222 where a = 2;
+savepoint savie;
+update t2 set a= 111 where a = 1;
+set debug_sync= 'now WAIT_FOR ended';
+connection default;
+set debug_sync= 'alter_table_copy_end SIGNAL ended WAIT_FOR end';
+alter table t1 add b int NULL, algorithm= copy, lock= none;
+connection con2;
+update t1 set a= 123 where a = 1;
+savepoint whoopsie;
+ERROR 42000: The storage engine for the table doesn't support SAVEPOINT
+show warnings;
+Level	Code	Message
+Warning	1178	Cannot set up a savepoint while ONLINE ALTER TABLE is in progress
+Error	1178	The storage engine for the table doesn't support SAVEPOINT
+rollback to savepoint savie;
+commit;
+set debug_sync= 'now SIGNAL end';
+connection default;
+select * from t1;
+a	b
+1	NULL
+2	NULL
+select * from t2;
+a
+1
+222
 # Cleanup
 set debug_sync= 'reset';
 drop table t1;
+drop table t2;

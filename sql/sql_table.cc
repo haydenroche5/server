@@ -11011,6 +11011,7 @@ static int online_alter_read_from_binlog(THD *thd, rpl_group_info *rgi,
     thd_progress_report(thd, my_b_tell(log_file)
                              / rgi->tables_to_lock->m_conv_table->s->reclength,
                         thd->progress.max_counter);
+    DEBUG_SYNC(thd, "alter_table_online_progress");
   }
   while(!error);
 
@@ -11059,7 +11060,7 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
   DBUG_ENTER("copy_data_between_tables");
 
   /* Two or 3 stages; Sorting, copying data and update indexes */
-  thd_progress_init(thd, 2 + MY_TEST(order) + MY_TEST(online));
+  thd_progress_init(thd, 2 + MY_TEST(order) + 2 * MY_TEST(online));
 
   if (online)
   {
@@ -11444,7 +11445,10 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
       error= lock_error;
 
     if (!error)
+    {
+      thd_progress_next_stage(thd);
       error= online_alter_read_from_binlog(thd, &rgi, binlog);
+    }
   }
 
   if (error > 0 && !from->s->tmp_table)

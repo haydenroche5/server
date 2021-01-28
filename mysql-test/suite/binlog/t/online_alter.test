@@ -325,6 +325,85 @@ update t1 set b= 555 where a = 5;
 select * from t1;
 
 --echo #
+--echo # Test progress report.
+--echo #
+
+create or replace table t1 (a int primary key, b int) engine=innodb;
+insert t1 values (1, 11);
+insert t1 values (2, 22);
+insert t1 values (3, 33);
+insert t1 values (4, 44);
+
+set debug_sync= 'alter_table_online_before_lock SIGNAL locking WAIT_FOR end';
+set debug_sync= 'alter_table_online_downgraded SIGNAL downgraded'
+                                             ' WAIT_FOR start_replication';
+set debug_sync= 'alter_table_online_progress SIGNAL applied WAIT_FOR proceed'
+                                           ' EXECUTE 9';
+--let $con= `select connection_id()`
+
+--send
+alter table t1 drop primary key, add primary key(b),
+            algorithm= copy, lock= none;
+
+--connection con2
+
+set debug_sync= 'now WAIT_FOR downgraded';
+
+update t1 set b= 111 where a = 1;
+insert t1 values (5, 55);
+update t1 set b= 555 where a = 5;
+insert t1 values (6, 66);
+update t1 set b= 666 where a = 6;
+set debug_sync= 'now SIGNAL start_replication';
+
+--disable_query_log
+eval set @con= $con;
+--enable_query_log
+
+--echo # First signal is for log description event.
+set debug_sync= 'now WAIT_FOR applied';
+select stage, progress from INFORMATION_SCHEMA.PROCESSLIST where id = @con;
+set debug_sync= 'now SIGNAL proceed WAIT_FOR applied';
+
+select stage, progress from INFORMATION_SCHEMA.PROCESSLIST where id = @con;
+set debug_sync= 'now SIGNAL proceed WAIT_FOR applied';
+
+select stage, progress from INFORMATION_SCHEMA.PROCESSLIST where id = @con;
+set debug_sync= 'now SIGNAL proceed WAIT_FOR applied';
+
+select stage, progress from INFORMATION_SCHEMA.PROCESSLIST where id = @con;
+set debug_sync= 'now SIGNAL proceed WAIT_FOR applied';
+
+select stage, progress from INFORMATION_SCHEMA.PROCESSLIST where id = @con;
+set debug_sync= 'now SIGNAL proceed WAIT_FOR applied';
+
+select stage, progress from INFORMATION_SCHEMA.PROCESSLIST where id = @con;
+set debug_sync= 'now SIGNAL proceed WAIT_FOR locking';
+
+begin;
+
+update t1 set b= 222 where a = 2;
+update t1 set b= 333 where a = 3;
+update t1 set b= 444 where a = 4;
+
+commit;
+set debug_sync= 'now SIGNAL end WAIT_FOR applied';
+
+select stage, progress from INFORMATION_SCHEMA.PROCESSLIST where id = @con;
+set debug_sync= 'now SIGNAL proceed WAIT_FOR applied';
+
+select stage, progress from INFORMATION_SCHEMA.PROCESSLIST where id = @con;
+set debug_sync= 'now SIGNAL proceed WAIT_FOR applied';
+
+select stage, progress from INFORMATION_SCHEMA.PROCESSLIST where id = @con;
+set debug_sync= 'now SIGNAL proceed';
+
+--connection default
+--reap
+select * from t1;
+
+
+--echo #
 --echo # Test system versioning
 --echo #
 create or replace table t1 (a int primary key, b int) engine=innodb;

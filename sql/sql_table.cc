@@ -11074,6 +11074,20 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
     error= from->s->online_alter_binlog->open(WRITE_CACHE);
 
     DBUG_ASSERT(!error);
+
+    if (!error)
+    {
+      /*
+        Some engines (for example, InnoDB) might not create a consistent view
+        snapshot until the first row is read. We need to be sure that we won't
+        see any table changes after we enable replication and downgrade the MDL.
+        So, we force the consistent snapshot to be created now.
+      */
+      handlerton *ht= from->s->db_type();
+      if (ht->start_consistent_snapshot)
+        error= ht->start_consistent_snapshot(ht, thd);
+    }
+
     if (error)
     {
       online_alter_cleanup_binlog(thd, from->s);

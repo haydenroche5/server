@@ -1657,6 +1657,7 @@ ibuf_entry_build(
 		dfield_copy(field, entry_field);
 
 		ifield = dict_index_get_nth_field(index, i);
+		ut_ad(!ifield->descending);
 		/* Prefix index columns of fixed-length columns are of
 		fixed length.  However, in the function call below,
 		dfield_get_type(entry_field) contains the fixed length
@@ -3825,7 +3826,7 @@ dump:
 				      		    &offsets, heap, mtr,
 						    &page_cur);
 
-		ut_ad(!cmp_dtuple_rec(entry, rec, offsets));
+		ut_ad(!cmp_dtuple_rec(entry, rec, index, offsets));
 		lock_rec_restore_from_page_infimum(*block, rec,
 						   block->page.id());
 	} else {

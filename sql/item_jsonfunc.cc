@@ -824,7 +824,7 @@ String *Item_func_json_extract::read_json(String *str,
                                           char **out_val, int *value_len)
 {
   String *js= args[0]->val_json(&tmp_js);
-  json_engine_t je, sav_je;
+  json_engine_t je, sav_je, je2;
   json_path_t p;
   const uchar *value;
   int not_first_value= 0;
@@ -874,6 +874,18 @@ String *Item_func_json_extract::read_json(String *str,
 
   while (json_get_path_next(&je, &p) == 0)
   {
+
+    je2= je;
+    if (paths && json_skip_array_and_count(je.value_type,
+                    &(paths->p.steps[p.last_step - p.steps+1].n_item),
+                    &je2,
+                    paths->p.steps[p.last_step - p.steps+1].is_negative_index,
+                    0))
+    {
+      je= je2;
+      goto error;
+    }
+
     if (!path_exact(paths, arg_count-1, &p, je.value_type))
       continue;
 
@@ -1431,7 +1443,7 @@ return_null:
 longlong Item_func_json_contains_path::val_int()
 {
   String *js= args[0]->val_json(&tmp_js);
-  json_engine_t je;
+  json_engine_t je, je2;
   uint n_arg;
   longlong result;
   json_path_t p;
@@ -1478,6 +1490,16 @@ longlong Item_func_json_contains_path::val_int()
   result= 0;
   while (json_get_path_next(&je, &p) == 0)
   {
+    je2= je;
+    if (paths && json_skip_array_and_count(je.value_type,
+                  &(paths->p.steps[p.last_step - p.steps+1].n_item),
+                  &je2,
+                  paths->p.steps[p.last_step - p.steps+1].is_negative_index,
+                  0))
+    {
+      je= je2;
+      break;
+    }
     int n_path= arg_count - 2;
     json_path_with_flags *c_path= paths;
     for (; n_path > 0; n_path--, c_path++)
@@ -1839,7 +1861,7 @@ return_null:
 
 String *Item_func_json_array_insert::val_str(String *str)
 {
-  json_engine_t je;
+  json_engine_t je, je2;
   String *js= args[0]->val_json(&tmp_js);
   uint n_arg, n_path;
 
@@ -1906,6 +1928,18 @@ String *Item_func_json_array_insert::val_str(String *str)
     while (json_scan_next(&je) == 0 && je.state != JST_ARRAY_END)
     {
       DBUG_ASSERT(je.state == JST_VALUE);
+
+      je2= je;
+      if (c_path && json_skip_array_and_count(je.value_type,
+                                    &(c_path->p.last_step[1].n_item),
+                                    &je2,
+                                    c_path->p.last_step[1].is_negative_index,
+                                    1))
+      {
+        je= je2;
+         goto js_error;
+      }
+
       if (n_item == c_path->p.last_step[1].n_item)
       {
         item_pos= (const char *) je.s.c_str;
@@ -2843,7 +2877,7 @@ bool Item_func_json_insert::fix_length_and_dec()
 
 String *Item_func_json_insert::val_str(String *str)
 {
-  json_engine_t je;
+  json_engine_t je, je2;
   String *js= args[0]->val_json(&tmp_js);
   uint n_arg, n_path;
   json_string_t key_name;
@@ -2862,7 +2896,7 @@ String *Item_func_json_insert::val_str(String *str)
     uint array_counters[JSON_DEPTH_LIMIT];
     json_path_with_flags *c_path= paths + n_path;
     const char *v_to;
-    const json_path_step_t *lp;
+    json_path_step_t *lp;
 
     if (!c_path->parsed)
     {
@@ -2958,6 +2992,14 @@ String *Item_func_json_insert::val_str(String *str)
 
       while (json_scan_next(&je) == 0 && je.state != JST_ARRAY_END)
       {
+         je2= je;
+         if (lp && json_skip_array_and_count(je.value_type, &(lp->n_item),
+                                             &je2, lp->is_negative_index, 0))
+         {
+           je= je2;
+           goto js_error;
+         }
+
         switch (je.state)
         {
         case JST_VALUE:
@@ -3095,7 +3137,7 @@ bool Item_func_json_remove::fix_length_and_dec()
 
 String *Item_func_json_remove::val_str(String *str)
 {
-  json_engine_t je;
+  json_engine_t je, je2;
   String *js= args[0]->val_json(&tmp_js);
   uint n_arg, n_path;
   json_string_t key_name;
@@ -3113,7 +3155,7 @@ String *Item_func_json_remove::val_str(String *str)
     uint array_counters[JSON_DEPTH_LIMIT];
     json_path_with_flags *c_path= paths + n_path;
     const char *rem_start= 0, *rem_end;
-    const json_path_step_t *lp;
+    json_path_step_t *lp;
     uint n_item= 0;
 
     if (!c_path->parsed)
@@ -3165,6 +3207,15 @@ String *Item_func_json_remove::val_str(String *str)
 
       while (json_scan_next(&je) == 0 && je.state != JST_ARRAY_END)
       {
+
+         je2= je;
+         if (lp && json_skip_array_and_count(je.value_type, &(lp->n_item),
+                                             &je2, lp->is_negative_index, 0))
+         {
+           je= je2;
+           goto js_error;
+         }
+
         switch (je.state)
         {
         case JST_VALUE:
@@ -3524,7 +3575,7 @@ String *Item_func_json_search::val_str(String *str)
 {
   String *js= args[0]->val_json(&tmp_js);
   String *s_str= args[2]->val_str(&tmp_path);
-  json_engine_t je;
+  json_engine_t je, je2;
   json_path_t p, sav_path;
   uint n_arg;
 
@@ -3562,6 +3613,16 @@ String *Item_func_json_search::val_str(String *str)
 
   while (json_get_path_next(&je, &p) == 0)
   {
+    je2= je;
+    if (paths && json_skip_array_and_count(je.value_type,
+                  &(paths->p.steps[p.last_step - p.steps+1].n_item),
+                  &je2,
+                  paths->p.steps[p.last_step - p.steps+1].is_negative_index,
+                  0))
+    {
+      je= je2;
+      goto js_error;
+    }
     if (json_value_scalar(&je))
     {
       if ((arg_count < 5 || path_ok(paths, arg_count - 4, &p, je.value_type)) &&

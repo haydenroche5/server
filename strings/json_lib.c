@@ -401,6 +401,8 @@ static int skip_str_constant(json_engine_t *j)
 /* Scalar string. */
 static int v_string(json_engine_t *j)
 {
+  if (!j->skipping_level)
+    j->number_of_elements++;
   return skip_str_constant(j) || json_scan_next(j);
 }
 
@@ -543,6 +545,8 @@ static int skip_num_constant(json_engine_t *j)
 /* Scalar numeric. */
 static int v_number(json_engine_t *j)
 {
+  if (!j->skipping_level)
+    j->number_of_elements++;
   return skip_num_constant(j) || json_scan_next(j);
 }
 
@@ -589,6 +593,8 @@ static int v_false(json_engine_t *j)
   if (skip_string_verbatim(&j->s, "alse"))
    return 1;
   j->state= j->stack[j->stack_p];
+  if (!j->skipping_level)
+    j->number_of_elements++;
   return json_scan_next(j);
 }
 
@@ -599,6 +605,8 @@ static int v_null(json_engine_t *j)
   if (skip_string_verbatim(&j->s, "ull"))
    return 1;
   j->state= j->stack[j->stack_p];
+  if (!j->skipping_level)
+    j->number_of_elements++;
   return json_scan_next(j);
 }
 
@@ -609,6 +617,8 @@ static int v_true(json_engine_t *j)
   if (skip_string_verbatim(&j->s, "rue"))
    return 1;
   j->state= j->stack[j->stack_p];
+  if (!j->skipping_level)
+    j->number_of_elements++;
   return json_scan_next(j);
 }
 
@@ -620,6 +630,8 @@ static int read_false(json_engine_t *j)
   j->value= j->value_begin;
   j->state= j->stack[j->stack_p];
   j->value_len= 5;
+  if (!j->skipping_level)
+    j->number_of_elements++;
   return skip_string_verbatim(&j->s, "alse");
 }
 
@@ -631,6 +643,8 @@ static int read_null(json_engine_t *j)
   j->value= j->value_begin;
   j->state= j->stack[j->stack_p];
   j->value_len= 4;
+  if (!j->skipping_level)
+    j->number_of_elements++;
   return skip_string_verbatim(&j->s, "ull");
 }
 
@@ -642,6 +656,8 @@ static int read_true(json_engine_t *j)
   j->value= j->value_begin;
   j->state= j->stack[j->stack_p];
   j->value_len= 4;
+  if (!j->skipping_level)
+    j->number_of_elements++;
   return skip_string_verbatim(&j->s, "rue");
 }
 
@@ -882,7 +898,11 @@ static int struct_end_cb(json_engine_t *j)
   run our 'state machine' accordingly.
 */
 static int struct_end_qb(json_engine_t *j)
-{ return json_actions[j->stack[j->stack_p]][C_RSQRB](j); }
+{
+  if (!j->skipping_level)
+    j->number_of_elements++;
+  return json_actions[j->stack[j->stack_p]][C_RSQRB](j);
+}
 
 
 /*
@@ -892,7 +912,11 @@ static int struct_end_qb(json_engine_t *j)
   run our 'state machine' accordingly.
 */
 static int struct_end_cm(json_engine_t *j)
-{ return json_actions[j->stack[j->stack_p]][C_COMMA](j); }
+{
+  if (!j->skipping_level)
+    j->number_of_elements++;
+  return json_actions[j->stack[j->stack_p]][C_COMMA](j);
+}
 
 
 int json_read_keyname_chr(json_engine_t *j)
@@ -992,6 +1016,7 @@ enum json_path_chr_classes {
   P_ETC,    /* everything else */
   P_ERR,    /* character disallowed in JSON*/
   P_BAD,    /* invalid character */
+  P_NEG,    /* hyphen (for negative index in path) */
   N_PATH_CLASSES,
 };
 
@@ -1003,7 +1028,7 @@ static enum json_path_chr_classes json_path_chr_map[128] = {
   P_ERR,   P_ERR,   P_ERR,   P_ERR,   P_ERR,   P_ERR,   P_ERR,   P_ERR,
 
   P_SPACE, P_ETC,   P_QUOTE, P_ETC,   P_USD,   P_ETC,   P_ETC,   P_ETC,
-  P_ETC,   P_ETC,   P_ASTER, P_ETC,   P_ETC,   P_ETC,   P_POINT, P_ETC,
+  P_ETC,   P_ETC,   P_ASTER, P_ETC,   P_ETC,   P_NEG,   P_POINT, P_ETC,
   P_ZERO,  P_DIGIT, P_DIGIT, P_DIGIT, P_DIGIT, P_DIGIT, P_DIGIT, P_DIGIT,
   P_DIGIT, P_DIGIT, P_ETC,   P_ETC,   P_ETC,   P_ETC,   P_ETC,   P_ETC,
 
@@ -1036,6 +1061,7 @@ enum json_path_states {
   PS_DWD, /* Double wildcard. */
   PS_KEYX, /* Key started with quote ("). */
   PS_KNMX, /* Parse quoted key name. */
+  PS_NEG,  /*  Parse '-' (hyphen) */
   N_PATH_STATES, /* Below are states that aren't in the transitions table. */
   PS_SCT,  /* Parse the 'strict' keyword. */
   PS_EKY,  /* '.' after the keyname so next step is the key. */
@@ -1057,52 +1083,55 @@ static int json_path_transitions[N_PATH_STATES][N_PATH_CLASSES]=
 */
 /* GO  */ { JE_EOS, PS_PT,  JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN,
             JE_SYN, PS_LAX, PS_SCT, PS_GO,  JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* LAX */ { JE_EOS, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN,
             JE_SYN, PS_LAX, JE_SYN, PS_GO,  JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* PT */  { PS_OK,  JE_SYN, PS_AST, PS_AR,  JE_SYN, PS_KEY, JE_SYN, JE_SYN,
             JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* AR */  { JE_EOS, JE_SYN, PS_AWD, JE_SYN, JE_SYN, JE_SYN, PS_Z,
             PS_INT, JE_SYN, JE_SYN, PS_SAR, JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* SAR */ { JE_EOS, JE_SYN, PS_AWD, JE_SYN, PS_PT,  JE_SYN, PS_Z,
             PS_INT, JE_SYN, JE_SYN, PS_SAR, JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* AWD */ { JE_EOS, JE_SYN, JE_SYN, JE_SYN, PS_PT,  JE_SYN, JE_SYN,
             JE_SYN, JE_SYN, JE_SYN, PS_AS,  JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* Z */   { JE_EOS, JE_SYN, JE_SYN, JE_SYN, PS_PT,  JE_SYN, JE_SYN,
             JE_SYN, JE_SYN, JE_SYN, PS_AS,  JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* INT */ { JE_EOS, JE_SYN, JE_SYN, JE_SYN, PS_PT,  JE_SYN, PS_INT,
             PS_INT, JE_SYN, JE_SYN, PS_AS,  JE_SYN, JE_SYN, JE_SYN,
             JE_NOT_JSON_CHR, JE_BAD_CHR},
 /* AS */  { JE_EOS, JE_SYN, JE_SYN, JE_SYN, PS_PT,  JE_SYN, JE_SYN, JE_SYN,
             JE_SYN, JE_SYN, PS_AS,  JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* KEY */ { JE_EOS, PS_KNM, PS_KWD, JE_SYN, PS_KNM, JE_SYN, PS_KNM,
             PS_KNM, PS_KNM, PS_KNM, PS_KNM, JE_SYN, PS_KEYX, PS_KNM,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* KNM */ { PS_KOK, PS_KNM, PS_AST, PS_EAR, PS_KNM, PS_EKY, PS_KNM,
             PS_KNM, PS_KNM, PS_KNM, PS_KNM, PS_ESC, PS_KNM, PS_KNM,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* KWD */ { PS_OK,  JE_SYN, JE_SYN, PS_AR,  JE_SYN, PS_EKY, JE_SYN,
             JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* AST */ { JE_SYN, JE_SYN, PS_DWD, JE_SYN, JE_SYN, JE_SYN, JE_SYN,
             JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* DWD */ { JE_SYN, JE_SYN, PS_AST, PS_AR,  JE_SYN, PS_KEY, JE_SYN, JE_SYN,
             JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* KEYX*/ { JE_EOS, PS_KNMX, PS_KNMX, PS_KNMX, PS_KNMX, PS_KNMX, PS_KNMX,
             PS_KNMX,PS_KNMX, PS_KNMX, PS_KNMX, PS_ESCX, PS_EKYX, PS_KNMX,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 /* KNMX */{ JE_EOS, PS_KNMX, PS_KNMX, PS_KNMX, PS_KNMX, PS_KNMX, PS_KNMX,
             PS_KNMX, PS_KNMX, PS_KNMX, PS_KNMX,PS_ESCX, PS_EKYX, PS_KNMX,
-            JE_NOT_JSON_CHR, JE_BAD_CHR},
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
+/* NEG */ { JE_EOS, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN,
+            PS_INT, JE_SYN, JE_SYN, PS_SAR, JE_SYN, JE_SYN, JE_SYN,
+            JE_NOT_JSON_CHR, JE_BAD_CHR, PS_NEG},
 };
 
 
@@ -1115,9 +1144,11 @@ int json_path_setup(json_path_t *p,
   json_string_setup(&p->s, i_cs, str, end);
 
   p->steps[0].type= JSON_PATH_ARRAY_WILD;
+  p->steps[0].is_negative_index= 0;
   p->last_step= p->steps;
   p->mode_strict= FALSE;
   p->types_used= JSON_PATH_KEY_NULL;
+  p->last_step->is_negative_index= 0;
 
   do
   {
@@ -1151,7 +1182,10 @@ int json_path_setup(json_path_t *p,
       continue;
     case PS_INT:
       p->last_step->n_item*= 10;
-      p->last_step->n_item+= p->s.c_next - '0';
+      if (p->last_step->is_negative_index)
+        p->last_step->n_item-= p->s.c_next - '0';
+      else
+        p->last_step->n_item+= p->s.c_next - '0';
       continue;
     case PS_EKYX:
       p->last_step->key_end= p->s.c_str - c_len;
@@ -1163,6 +1197,7 @@ int json_path_setup(json_path_t *p,
       /* fall through */
     case PS_KEY:
       p->last_step++;
+      p->last_step->is_negative_index= 0;
       if (p->last_step - p->steps >= JSON_DEPTH_LIMIT)
         return p->s.error= JE_DEPTH;
       p->types_used|= p->last_step->type= JSON_PATH_KEY | double_wildcard;
@@ -1182,6 +1217,7 @@ int json_path_setup(json_path_t *p,
       p->types_used|= p->last_step->type= JSON_PATH_ARRAY | double_wildcard;
       double_wildcard= JSON_PATH_KEY_NULL;
       p->last_step->n_item= 0;
+      p->last_step->is_negative_index= 0;
       continue;
     case PS_ESC:
       if (json_handle_esc(&p->s))
@@ -1200,6 +1236,8 @@ int json_path_setup(json_path_t *p,
     case PS_DWD:
       double_wildcard= JSON_PATH_DOUBLE_WILD;
       continue;
+    case PS_NEG:
+       p->last_step->is_negative_index= 1;
     };
   } while (state != PS_OK);
 
@@ -1236,6 +1274,83 @@ int json_skip_level_and_count(json_engine_t *j, int *n_items_skipped)
   }
 
   return 1;
+}
+
+
+
+/*
+  Counts number of elements in the array if the index in the path
+  if negative. This function is implemented to count the elements in
+  the array. It is required to set the ngeative index in the path
+  to a correct corresponding positive index value.
+
+  SYNOPSIS
+    json_value_type      - type of json value
+    n_item  - current    - index in the path
+    is_negative_index    - true if the index in path is negative
+    j                    - current json engine
+    is_json_array_insert - 1 if we are doing json_array_insert()
+                           otherwise 0.
+
+  RETURN VALUE
+    1 if error occurs during scanning the json otherwise 0.
+
+  IMPLEMENTATION
+    If the index in the path is negative or if the current json value is
+    not of array type, don't calculate the number of elements. So just
+    return to the calling function.
+
+    Total number of elements in the array is equal to the number of ',' after
+    the each element and ']' after the end of last element of the array. So
+    json_scan_next() can be used because it scans an element in the array,
+    including any ',' after each element and ']' at the end of element.
+    After element and ',' or ']' is scanned, we can increment the counter.
+
+    If there are any objects or sub-arrays, skip them. However,
+    json_skip_level() skips them by calling json_scan_next(). So set
+    j->skipping_level to 1 to avoid counting these elements.
+
+    When scanning of the current array is complete then the stack pointer
+    for json engine, decreases by 1, so break out of the loop. At the end
+    set the n_item to correct value between 0 to (size_of_array-1).
+
+    When counting left to right (positive index) and doing
+    json_array_index(), the new element is inserted at previous index
+    of the found index. So we need to increment the counter by 1 when
+    we are counting right to left (negative index) because we start with -1.
+*/
+
+int json_skip_array_and_count(int json_value_type, long int *n_item,
+                              json_engine_t *j, int is_negative_index,
+                              int is_json_array_insert)
+{
+  int level= j->stack_p, err= 0;
+
+  if (is_negative_index != 1 ||
+      !(json_value_type == JSON_VALUE_ARRAY && *n_item < 0))
+    return 0;
+
+  j->number_of_elements= 0;
+  j->skipping_level= 0;
+  while (!(err= json_scan_next(j)))
+  {
+    if (j->stack_p < level )
+      break;
+    if (j->state == JST_ARRAY_START || j->state == JST_OBJ_START)
+    {
+        j->skipping_level= 1;
+        if (json_skip_level(j))
+          return 1;
+        j->skipping_level= 0;
+    }
+  }
+
+ *n_item+= j->number_of_elements;
+
+  if (is_json_array_insert)
+    (*n_item)++;
+
+  return err;
 }
 
 
@@ -1330,12 +1445,24 @@ int json_find_path(json_engine_t *je,
                    uint *array_counters)
 {
   json_string_t key_name;
-
+  json_engine_t je2= *je;
   json_string_set_cs(&key_name, p->s.cs);
 
   do
   {
     json_path_step_t *cur_step= *p_cur_step;
+
+      je2= *je;
+      if (cur_step && json_skip_array_and_count(je->value_type,
+                                                &cur_step->n_item,
+                                                &je2,
+                                                cur_step->is_negative_index,
+                                                0))
+      {
+        *je= je2;
+        goto exit;
+      }
+
     switch (je->state)
     {
     case JST_KEY:

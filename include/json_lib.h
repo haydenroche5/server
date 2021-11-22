@@ -93,7 +93,8 @@ typedef struct st_json_path_step_t
                                    /* see json_path_step_types */
   const uchar *key; /* Pointer to the beginning of the key. */
   const uchar *key_end;  /* Pointer to the end of the key. */
-  uint n_item;      /* Item number in an array. No meaning for the key step. */
+  long int n_item;  /* Item number in an array. No meaning for the key step. */
+  uint is_negative_index; /* Set to 1 if there is negative index in path */
 } json_path_step_t;
 
 
@@ -224,6 +225,15 @@ typedef struct st_json_engine_t
 
   int stack[JSON_DEPTH_LIMIT]; /* Keeps the stack of nested JSON structures. */
   int stack_p;                 /* The 'stack' pointer. */
+
+  /* Counts the total elements in the json array */
+  long int number_of_elements;
+  /*
+    True if we are skipping a level. Used when we want to count the
+    elements in the array but skip counting the objects and other
+    sub-arrays the outer array might have.
+  */
+  int skipping_level;
 } json_engine_t;
 
 
@@ -435,6 +445,10 @@ int json_locate_key(const char *js, const char *js_end,
 
 int json_normalize(DYNAMIC_STRING *result,
                    const char *s, size_t size, CHARSET_INFO *cs);
+
+int json_skip_array_and_count(int json_value_type, long int *n_item,
+                              json_engine_t *t, int is_negative_index,
+                              int is_json_array_insert);
 
 #ifdef  __cplusplus
 }

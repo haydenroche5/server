@@ -404,8 +404,6 @@ public:
   void set_write_error(THD *thd, bool is_transactional);
   static bool check_write_error(THD *thd);
   int write_cache(THD *thd, IO_CACHE *cache);
-
-  bool flush_and_sync(bool *synced);
   char* get_name() { return name; }
   void cleanup()
   {
@@ -806,13 +804,6 @@ public:
               Format_description_log_event *fdle, bool do_xa);
   int do_binlog_recovery(const char *opt_name, bool do_xa_recovery);
 #if !defined(MYSQL_CLIENT)
-  Rows_log_event*
-  prepare_pending_rows_event(THD *thd, TABLE* table,
-                             binlog_cache_data *cache_data,
-                             uint32 serv_id, size_t needed,
-                             bool is_transactional,
-                             Rows_event_factory event_factory);
-
   static int remove_pending_rows_event(THD *thd, binlog_cache_data *cache_data);
 
 #endif /* !defined(MYSQL_CLIENT) */
@@ -913,8 +904,8 @@ public:
   void stop_union_events(THD *thd);
   bool is_query_in_union(THD *thd, query_id_t query_id_param);
 
-  bool write_event(Log_event *ev, binlog_cache_data *data, IO_CACHE *file)
-  { return Event_log::write_event(ev, data, file); }
+  using Event_log::write_event;
+
   bool write_event(Log_event *ev) { return write_event(ev, 0, &log_file); }
 
   bool write_event_buffer(uchar* buf,uint len);

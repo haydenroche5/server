@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2020, MariaDB
+   Copyright (c) 2010, 2021, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -6841,10 +6841,12 @@ ignorability:
 key_list:
           key_list ',' key_part order_dir
           {
+            $3->asc= $4;
             Lex->last_key->columns.push_back($3, thd->mem_root);
           }
         | key_part order_dir
           {
+            $1->asc= $2;
             Lex->last_key->columns.push_back($1, thd->mem_root);
           }
         ;

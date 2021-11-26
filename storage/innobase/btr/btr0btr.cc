@@ -4734,7 +4734,7 @@ loop:
 		/* For spatial index, we cannot guarantee the key ordering
 		across pages, so skip the record compare verification for
 		now. Will enhanced in special R-Tree index validation scheme */
-		if (!dict_index_is_spatial(index)
+		if (index->is_btree()
 		    && cmp_rec_rec(rec, right_rec,
 				   offsets, offsets2, index) >= 0) {
 
@@ -4769,9 +4769,7 @@ loop:
 	in parent level and linked pages in the child level.
 	2) Search parent from root is very costly for R-tree.
 	We will add special validation mechanism for R-tree later (WL #7520) */
-	if (!dict_index_is_spatial(index)
-	    && block->page.id().page_no() != dict_index_get_page(index)) {
-
+	if (index->is_btree() && block->page.id().page_no() != index->page) {
 		/* Check father node pointers */
 		rec_t*	node_ptr;
 

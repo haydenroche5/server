@@ -3492,7 +3492,7 @@ ibuf_insert(
 
 	ut_ad(dtuple_check_typed(entry));
 	ut_ad(page_id.space() != SRV_TMP_SPACE_ID);
-
+	ut_ad(index->is_btree());
 	ut_a(!dict_index_is_clust(index));
 	ut_ad(!index->table->is_temporary());
 

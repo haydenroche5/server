@@ -1233,7 +1233,7 @@ static bool dict_table_can_be_evicted(dict_table_t *table)
 dict_index_t *dict_index_t::clone() const
 {
   ut_ad(n_fields);
-  ut_ad(!(type & (DICT_IBUF | DICT_SPATIAL | DICT_FTS)));
+  ut_ad(is_btree());
   ut_ad(online_status == ONLINE_INDEX_COMPLETE);
   ut_ad(is_committed());
   ut_ad(!is_dummy);
@@ -4720,7 +4720,7 @@ dict_foreign_qualify_index(
 		return(false);
 	}
 
-	if (index->type & (DICT_SPATIAL | DICT_FTS | DICT_CORRUPT)) {
+	if (!index->is_btree()) {
 		return false;
 	}
 

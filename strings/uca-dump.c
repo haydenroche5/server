@@ -334,7 +334,7 @@ my_ducet_weight_normalize_on_level(MY_DUCET_WEIGHT *weights,
         fprintf(stderr, "Secondary level is too large: %04X\n",
                 (int) weights->weight[level][dst]);
       }
-      weights->weight[level][dst]= 0x20 - weights->weight[level][dst];
+      weights->weight[level][dst]= (uint16) (0x20 - weights->weight[level][dst]);
     }
   }
 }
@@ -424,7 +424,7 @@ int process_option(OPT *options, const char *opt)
   }
   if (!lstrncmp(opt, opt_levels))
   {
-    options->levels= strtoul(opt + opt_levels.length, NULL, 10);
+    options->levels= (uint) strtoul(opt + opt_levels.length, NULL, 10);
     if (options->levels < 1 || options->levels > 3)
     {
       printf("Bad --levels value\n");
@@ -527,7 +527,7 @@ my_bool parse_at_line(MY_DUCET *ducet, const char *str)
     const char *src= str + version.length;
     long n[3]= {0};
     uint pos;
-    size_t length;
+    int length;
 
     length= snprintf(ducet->version_str, sizeof(ducet->version_str)-1,
                      "%s", src);
@@ -537,11 +537,11 @@ my_bool parse_at_line(MY_DUCET *ducet, const char *str)
     {
       char *endptr;
       n[pos]= strtol(src, &endptr, 10);
-      if (*endptr != '.' && *endptr != '\r' && *endptr != '\n')
+      if (*endptr != '.' && *endptr != '\r' && *endptr != '\n' && *endptr != 0)
         return TRUE;
       src= endptr + 1;
     }
-    ducet->version= (uint) (n[0] * 10000 + n[1] * 100 + n[2]);
+    ducet->version= (uint) (n[0] * 100 + n[1] * 10 + n[2]);
   }
   return FALSE;
 }
@@ -555,7 +555,7 @@ parse_chars(MY_DUCET_CHARS *dst, char *str)
   dst->length= 0;
   for (s= strtok(str, delim); s ; s= strtok(NULL, delim))
   {
-    my_wc_t code= strtol(s, NULL, 16);
+    my_wc_t code= (my_wc_t) strtol(s, NULL, 16);
     if (dst->length < array_elements(dst->wc))
       dst->wc[dst->length]= code;
     dst->length++;
@@ -587,11 +587,12 @@ parse_weights(MY_DUCET_WEIGHT *dst, my_bool *is_variable, char *weight)
     for (s= weights[w]; *s ;)
     {
       char *endptr;
-      size_t part;
-      part= strtol(s+1,&endptr,16);
+      ulong part= strtoul(s+1,&endptr,16);
       if (w == 0 && s[0] == '*')
         *is_variable= TRUE;
-      dst->weight[partnum][w]= part;
+      if (part > 0xFFFF)
+        fprintf(stderr, "Weight is too large: %X\n", (uint) part);
+      dst->weight[partnum][w]= (uint16) part;
       s= endptr;
       partnum++;
     }
@@ -660,6 +661,16 @@ print_logical_positions(const MY_DUCET_LOGICAL_POSITIONS *src,
 
 
 static void
+print_version(const MY_DUCET *ducet, const OPT *opt)
+{
+  printf("\n");
+  printf("#define %s_version %d /* %s */\n",
+         opt->name_prefix, ducet->version, ducet->version_str);
+  printf("\n");
+}
+
+
+static void
 print_contraction(const MY_DUCET_CONTRACTION *c,
                   uint level,
                   const OPT *options)
@@ -717,7 +728,8 @@ print_contraction_list(const MY_DUCET_CONTRACTION_LIST *src, uint level, const O
 int main(int ac, char **av)
 {
   char str[1024];
-  size_t code, w;
+  my_wc_t code;
+  uint w;
   static MY_DUCET ducet;
   int pageloaded[MY_UCA_NPAGES];
   FILE *file;
@@ -895,7 +907,7 @@ int main(int ac, char **av)
         default: mchars= ducet.single_chars[code].weight.weight_length;
       }
       
-      pagemaxlen[page]= maxnum;
+      pagemaxlen[page]= (int) maxnum;
 
 
       /*
@@ -964,6 +976,7 @@ int main(int ac, char **av)
     if (!options.no_contractions)
       print_contraction_list(&ducet.contractions, w, &options);
   }
+  print_version(&ducet, &options);
   print_logical_positions(&ducet.logical_positions, &ducet, &options);
   
   return 0;

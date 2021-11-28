@@ -17,6 +17,19 @@
    Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston,
    MA 02110-1335  USA */
 
+
+/*
+  According to "Computing Implicit Weights" in
+    https://unicode.org/reports/tr10/#Values_For_Base_Table
+  (as of Unicode 14.0.0)  implicit weights for a code CP are
+  constructed as follows:
+    [.AAAA.0020.0002][.BBBB.0000.0000]
+
+  - There are two primary weights, depending on the character type and block.
+  - There is one weight on the other levels.
+*/
+
+
 typedef struct my_uca_implict_weight_t
 {
   uint16 weight[2];

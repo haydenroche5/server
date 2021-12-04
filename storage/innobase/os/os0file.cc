@@ -2245,9 +2245,7 @@ os_file_create_func(
 	}
 
 
-	// TODO: Create a bug, this looks wrong. The flush log
-	// parameter is dynamic.
-	if (type == OS_LOG_FILE && srv_flush_log_at_trx_commit == 2) {
+	if (type == OS_LOG_FILE/* FIXME: MDEV-14425 work-around */)
 		/* Do not use unbuffered i/o for the log files because
 		value 2 denotes that we do not flush the log at every
 		commit, but only once per second */

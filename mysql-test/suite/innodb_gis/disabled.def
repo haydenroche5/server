@@ -12,3 +12,5 @@
 
 rtree_concurrent_srch : MDEV-15284 COUNT(*) mismatch
 rtree_recovery : MDEV-15284 COUNT(*) mismatch
+rtree_compress : MDEV-14425 FIXME: occasionally recovers as empty table
+types : MDEV-14425 FIXME: recovery may run out of buffer pool

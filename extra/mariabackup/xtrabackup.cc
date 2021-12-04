@@ -2833,6 +2833,7 @@ skip:
 static lsn_t xtrabackup_copy_log(lsn_t start_lsn, lsn_t end_lsn, bool last)
 {
 	lsn_t	scanned_lsn	= start_lsn;
+#if 0 // FIXME
 	const byte* log_block = log_sys.buf;
 	bool more_data = false;
 
@@ -2876,7 +2877,7 @@ static lsn_t xtrabackup_copy_log(lsn_t start_lsn, lsn_t end_lsn, bool last)
 	}
 
 	store_t store= STORE_NO;
-	if (more_data && recv_sys.parse(0, &store, false)) {
+	if (more_data && recv_sys.parse(0, &store)) {
 		msg("Error: copying the log failed");
 		return(0);
 	}
@@ -2899,7 +2900,7 @@ static lsn_t xtrabackup_copy_log(lsn_t start_lsn, lsn_t end_lsn, bool last)
 			return(0);
 		}
 	}
-
+#endif
 	return(scanned_lsn);
 }
 
@@ -2940,11 +2941,13 @@ static bool xtrabackup_copy_logfile(bool last = false)
 		}
 
 		if (lsn == start_lsn) {
+#if 0 // FIXME
 			overwritten_block= !recv_sys.is_corrupt_log()
 				&& log_block_calc_checksum_crc32(log_sys.buf) ==
 					log_block_get_checksum(log_sys.buf)
 				&& log_block_get_hdr_no(log_sys.buf) >
 					log_block_convert_lsn_to_no(start_lsn);
+#endif
 			start_lsn = 0;
 		} else {
 			mysql_mutex_lock(&recv_sys.mutex);
@@ -4314,11 +4317,13 @@ static bool xtrabackup_backup_low()
 						 {log_sys.checkpoint_buf,
 						  OS_FILE_LOG_BLOCK_SIZE});
 			}
+#if 0
 			metadata_to_lsn = mach_read_from_8(
 				log_sys.checkpoint_buf + LOG_CHECKPOINT_LSN);
 			msg("mariabackup: The latest check point"
 			    " (for incremental): '" LSN_PF "'",
 			    metadata_to_lsn);
+#endif
 		} else {
 			msg("Error: recv_find_max_checkpoint() failed.");
 		}
@@ -4525,23 +4530,38 @@ free_and_fail:
 		goto fail;
 	}
 
-	if (log_sys.log.format == 0) {
-		msg("Error: cannot process redo log before MariaDB 10.2.2");
-		goto unlock_and_fail;
-	}
-
-	byte* buf = log_sys.checkpoint_buf;
+	byte *buf = log_sys.checkpoint_buf;
 	checkpoint_lsn_start = log_sys.log.get_lsn();
 	checkpoint_no_start = log_sys.next_checkpoint_no;
 
-	log_sys.log.read(max_cp_field, {buf, OS_FILE_LOG_BLOCK_SIZE});
-
-	if (checkpoint_no_start != mach_read_from_8(buf + LOG_CHECKPOINT_NO)
-	    || checkpoint_lsn_start
-	    != mach_read_from_8(buf + LOG_CHECKPOINT_LSN)
-	    || log_sys.log.get_lsn_offset()
-	    != mach_read_from_8(buf + LOG_CHECKPOINT_OFFSET))
-		goto reread_log_header;
+	switch (log_sys.log.format) {
+	default:
+		msg("Error: cannot process redo log before MariaDB 10.5");
+		goto unlock_and_fail;
+	case log_t::FORMAT_10_5:
+	case log_t::FORMAT_ENC_10_5:
+		if (max_cp_field == LOG_CHECKPOINT_1) {
+			log_sys.log.read(max_cp_field, {buf, 512});
+		}
+		if (checkpoint_no_start != mach_read_from_8(buf)
+		    || checkpoint_lsn_start != mach_read_from_8(buf + 8)
+		    || log_sys.log.get_lsn_offset()
+		    != mach_read_from_8(buf + 16)) {
+			goto reread_log_header;
+		}
+		break;
+	case log_t::FORMAT_10_8:
+	case log_t::FORMAT_ENC_10_8:
+		if (max_cp_field == LOG_CHECKPOINT_1) {
+			log_sys.log.read(max_cp_field, {buf, 64});
+		}
+		if (checkpoint_lsn_start != mach_read_from_8(buf)
+		    || log_sys.log.get_lsn_offset()
+		    != (mach_read_from_8(buf + 16) & ~0ULL >> 1)) {
+			goto reread_log_header;
+		}
+		break;
+	}
 
 	mysql_mutex_unlock(&log_sys.mutex);
 
@@ -4567,30 +4587,30 @@ free_and_fail:
 
 	byte *log_hdr_field = log_hdr_buf;
 	mach_write_to_4(LOG_HEADER_FORMAT + log_hdr_field, log_sys.log.format);
-	mach_write_to_4(LOG_HEADER_SUBFORMAT + log_hdr_field, log_sys.log.subformat);
 	mach_write_to_8(LOG_HEADER_START_LSN + log_hdr_field, checkpoint_lsn_start);
 	strcpy(reinterpret_cast<char*>(LOG_HEADER_CREATOR + log_hdr_field),
 		"Backup " MYSQL_SERVER_VERSION);
-	log_block_set_checksum(log_hdr_field,
-		log_block_calc_checksum_crc32(log_hdr_field));
+	mach_write_to_4(my_assume_aligned<4>(508 + log_hdr_field),
+			my_crc32c(0, log_hdr_field, 508));
 
 	/* copied from log_group_checkpoint() */
 	log_hdr_field +=
 		(log_sys.next_checkpoint_no & 1) ? LOG_CHECKPOINT_2 : LOG_CHECKPOINT_1;
 	/* The least significant bits of LOG_CHECKPOINT_OFFSET must be
-	stored correctly in the copy of the LOG_FILE_NAME. The most significant
+	stored correctly in the copy of the ib_logfile0. The most significant
 	bits, which identify the start offset of the log block in the file,
 	we did choose freely, as LOG_FILE_HDR_SIZE. */
 	ut_ad(!((log_sys.log.get_lsn() ^ checkpoint_lsn_start)
 		& (OS_FILE_LOG_BLOCK_SIZE - 1)));
+#if 0 // FIXME
 	/* Adjust the checkpoint page. */
 	memcpy(log_hdr_field, log_sys.checkpoint_buf, OS_FILE_LOG_BLOCK_SIZE);
 	mach_write_to_8(log_hdr_field + LOG_CHECKPOINT_OFFSET,
 		(checkpoint_lsn_start & (OS_FILE_LOG_BLOCK_SIZE - 1))
 		| LOG_FILE_HDR_SIZE);
-	log_block_set_checksum(log_hdr_field,
-			log_block_calc_checksum_crc32(log_hdr_field));
-
+	mach_write_to_4(my_assume_aligned<4>(508 + log_hdr_field),
+			my_crc32c(0, log_hdr_field, 508));
+#endif
 	/* Write log header*/
 	if (ds_write(dst_log_file, log_hdr_buf, LOG_FILE_HDR_SIZE)) {
 		msg("error: write to logfile failed");

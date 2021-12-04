@@ -239,8 +239,9 @@ public:
 				/*!< the log data has been scanned up to this
 				lsn */
 	ulint		scanned_checkpoint_no;
-				/*!< the log data has been scanned up to this
-				checkpoint number (lowest 4 bytes) */
+				/*!< the log_t::FORMAT_10_5 data has
+				been scanned up to this
+				checkpoint number (least significant bits) */
 	ulint		recovered_offset;
 				/*!< start offset of non-parsed log records in
 				buf */
@@ -313,9 +314,9 @@ private:
 public:
   /** Check whether the number of read redo log blocks exceeds the maximum.
   Store last_stored_lsn if the recovery is not in the last phase.
-  @param[in,out] store    whether to store page operations
+  @param store    whether to store page operations
   @return whether the memory is exhausted */
-  inline bool is_memory_exhausted(store_t *store);
+  inline bool is_memory_exhausted(store_t store);
   /** Apply buffered log to persistent data pages.
   @param last_batch     whether it is possible to write more redo log */
   void apply(bool last_batch);
@@ -339,18 +340,26 @@ public:
   @param page_id  page identifier
   @param start_lsn start LSN of the mini-transaction
   @param lsn      @see mtr_t::commit_lsn()
-  @param l        redo log snippet @see log_t::FORMAT_10_5
+  @param l        redo log snippet; @see log_t::file::is_physical()
   @param len      length of l, in bytes */
   inline void add(const page_id_t page_id, lsn_t start_lsn, lsn_t lsn,
                   const byte *l, size_t len);
 
-  /** Parse and register one mini-transaction in log_t::FORMAT_10_5.
+  /** Parse and register one log_t::FORMAT_10_5 mini-transaction.
   @param checkpoint_lsn  the log sequence number of the latest checkpoint
   @param store           whether to store the records
-  @param apply           whether to apply file-level log records
   @return whether FILE_CHECKPOINT record was seen the first time,
   or corruption was noticed */
-  bool parse(lsn_t checkpoint_lsn, store_t *store, bool apply);
+  bool parse(lsn_t checkpoint_lsn, store_t *store);
+
+  enum parse_mtr_result { OK, PREMATURE_EOF, GOT_EOF };
+
+  /** Parse and register one log_t::FORMAT_10_8 mini-transaction.
+  @param checkpoint_lsn  the log sequence number of the latest checkpoint
+  @param store           whether to store the records
+  @return whether FILE_CHECKPOINT record was seen the first time,
+  or corruption was noticed */
+  parse_mtr_result parse_mtr(lsn_t checkpoint_lsn, store_t store);
 
   /** Clear a fully processed set of stored redo log records. */
   inline void clear();

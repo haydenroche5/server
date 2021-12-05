@@ -1535,7 +1535,7 @@ fail:
 		ulint dl = log_block_get_data_len(buf);
 		if (dl < 12 || (dl != 512
 				&& dl > (log_sys.log.format == FORMAT_ENC_10_5
-					 ? 504 : 508))) {
+					 ? 504U : 508U))) {
 			recv_sys.set_corrupt_log();
 			goto fail;
 		}

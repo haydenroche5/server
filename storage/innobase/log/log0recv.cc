@@ -2584,7 +2584,6 @@ recv_sys_t::parse_mtr(lsn_t checkpoint_lsn, store_t store)
  eom_found:
   const byte sequence_bit{*l};
 
-  if (l == buf || rlen >= RECV_PARSING_BUF_SIZE)
   if (l + 5 >= end)
     goto maybe_got_eof;
 
@@ -4822,7 +4821,9 @@ recheck:
 		log_sys.buf_next_to_write = log_sys.buf_free;
 		log_sys.last_checkpoint_lsn = checkpoint_lsn;
 
-		if (srv_operation == SRV_OPERATION_NORMAL) {
+		if (srv_operation == SRV_OPERATION_NORMAL
+		    && (~log_t::FORMAT_ENCRYPTED & log_sys.log.format)
+		    == log_t::FORMAT_10_8) {
 			/* Write a FILE_CHECKPOINT marker as the first thing,
 			before generating any other redo log. This ensures
 			that subsequent crash recovery will be possible even

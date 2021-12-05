@@ -896,15 +896,18 @@ static lsn_t srv_prepare_to_delete_redo_log_file(bool old_exists)
 
 		mysql_mutex_lock(&log_sys.mutex);
 
-		fil_names_clear(log_sys.get_lsn());
+		const bool other_format = log_t::FORMAT_10_8
+			!= (~log_t::FORMAT_ENCRYPTED & log_sys.log.format);
+
+		if (!other_format) {
+			fil_names_clear(log_sys.get_lsn());
+		}
 
 		flushed_lsn = log_sys.get_lsn();
 
 		{
 			ib::info	info;
-			if (srv_log_file_size == 0
-			    || (log_sys.log.format & ~log_t::FORMAT_ENCRYPTED)
-			    != log_t::FORMAT_10_8) {
+			if (srv_log_file_size == 0 || other_format) {
 				info << "Upgrading redo log: ";
 			} else if (!old_exists
 				   || srv_log_file_size

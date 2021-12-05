@@ -15,7 +15,6 @@ alter_crash : MDEV-14425 TODO
 innodb-alter-tempfile : MDEV-14425 TODO
 innodb_bulk_create_index_debug : MDEV-14425 TODO
 instant_alter_crash : MDEV-14425 TODO
-log_corruption : MDEV-14425 TODO
 log_file_size : MDEV-14425 TODO
 truncate_crash : MDEV-14425 TODO
 undo_truncate_recover : MDEV-14425 TODO (hangs)

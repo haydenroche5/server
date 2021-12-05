@@ -387,7 +387,7 @@ public:
     lsn_t get_lsn_offset() const { return lsn_offset; }
 
     /** Determine the sequence bit at a log sequence number */
-    bool get_sequence_bit(lsn_t lsn) const noexcept
+    byte get_sequence_bit(lsn_t lsn) const noexcept
     {
       ut_ad(lsn >= first_lsn);
       return !(((lsn - first_lsn) / capacity()) & 1);

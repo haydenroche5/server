@@ -75,7 +75,7 @@ SELECT * FROM INFORMATION_SCHEMA.ENGINES
 WHERE engine = 'innodb'
 AND support IN ('YES', 'DEFAULT', 'ENABLED');
 ENGINE	SUPPORT	COMMENT	TRANSACTIONS	XA	SAVEPOINTS
-FOUND 1 /InnoDB: Invalid redo log header checksum/ in mysqld.1.err
+FOUND 2 /InnoDB: Invalid log header checksum/ in mysqld.1.err
 # distant future redo log format, with valid header checksum
 # restart: --innodb-data-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption --innodb-log-group-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption
 SELECT * FROM INFORMATION_SCHEMA.ENGINES
@@ -96,7 +96,7 @@ SELECT * FROM INFORMATION_SCHEMA.ENGINES
 WHERE engine = 'innodb'
 AND support IN ('YES', 'DEFAULT', 'ENABLED');
 ENGINE	SUPPORT	COMMENT	TRANSACTIONS	XA	SAVEPOINTS
-FOUND 1 /InnoDB: Invalid log block checksum. block: 2372 checkpoint no: 1 expected: 3362026715 found: 144444122/ in mysqld.1.err
+FOUND 3 /InnoDB: Invalid log header checksum/ in mysqld.1.err
 FOUND 1 /InnoDB: Upgrade after a crash is not supported\. The redo log was created with malicious intentions, or perhaps, and it appears corrupted\./ in mysqld.1.err
 # same, but with current-version header
 # restart: --innodb-data-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption --innodb-log-group-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption --innodb-force-recovery=5
@@ -104,7 +104,7 @@ SELECT * FROM INFORMATION_SCHEMA.ENGINES
 WHERE engine = 'innodb'
 AND support IN ('YES', 'DEFAULT', 'ENABLED');
 ENGINE	SUPPORT	COMMENT	TRANSACTIONS	XA	SAVEPOINTS
-FOUND 2 /InnoDB: Invalid log block checksum. block: 2372 checkpoint no: 1 expected: 3362026715 found: 144444122/ in mysqld.1.err
+FOUND 4 /InnoDB: Invalid log header checksum/ in mysqld.1.err
 # --innodb-force-recovery=6 (skip the entire redo log)
 # restart: --innodb-data-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption --innodb-log-group-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption --innodb-force-recovery=6
 SELECT * FROM INFORMATION_SCHEMA.ENGINES
@@ -141,8 +141,9 @@ SELECT * FROM INFORMATION_SCHEMA.ENGINES
 WHERE engine = 'innodb'
 AND support IN ('YES', 'DEFAULT', 'ENABLED');
 ENGINE	SUPPORT	COMMENT	TRANSACTIONS	XA	SAVEPOINTS
-FOUND 1 /InnoDB: Invalid log block checksum. block: 2372 checkpoint no: 1 expected: 2454333373 found: 150151/ in mysqld.1.err
-FOUND 3 /\[ERROR\] InnoDB: Upgrade after a crash is not supported\. The redo log was created with MariaDB 10\.3\.1, and it appears corrupted\./ in mysqld.1.err
+NOT FOUND /InnoDB: Invalid log header checksum
+--source include/search_pattern_in_file.inc
+let SEARCH_PATTERN=\[ERROR\] InnoDB: Upgrade after a crash is not supported\. The redo log was created with MariaDB 10\.3\.1, and it appears corrupted\./ in mysqld.1.err
 # valid header, invalid checkpoint 1, valid checkpoint 2, invalid log record
 # restart: --innodb-data-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption --innodb-log-group-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption
 SELECT * FROM INFORMATION_SCHEMA.ENGINES

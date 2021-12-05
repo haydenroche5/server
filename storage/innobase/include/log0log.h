@@ -513,7 +513,7 @@ public:
     ut_ad(buf_free <= size_t{srv_log_buffer_size});
   }
 
-  bool get_sequence_bit(lsn_t lsn) const noexcept
+  byte get_sequence_bit(lsn_t lsn) const noexcept
   { return log.get_sequence_bit(lsn); }
 
   /** Write checkpoint information to the log header and release mutex.

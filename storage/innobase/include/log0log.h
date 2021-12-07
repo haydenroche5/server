@@ -366,13 +366,6 @@ public:
       set_lsn_offset(c_lsn_offset);
     }
 
-    /** Read a log segment to log_sys.buf.
-    @param[in,out]	start_lsn	in: read area start,
-					out: the last read valid lsn
-    @param[in]		end_lsn		read area end
-    @return	whether no invalid blocks (e.g checksum mismatch) were found */
-    bool read_log_seg(lsn_t* start_lsn, lsn_t end_lsn) noexcept;
-
     /** Initialize the redo log buffer. */
     void create();
 

@@ -181,6 +181,14 @@ AND support IN ('YES', 'DEFAULT', 'ENABLED');
 COUNT(*)
 1
 FOUND 5 /InnoDB: Upgrading redo log:/ in mysqld.1.err
+# Empty 10.5 redo log
+# restart: --innodb-data-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption --innodb-log-group-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption --innodb-force-recovery=5 --innodb-log-file-size=2m
+SELECT COUNT(*) FROM INFORMATION_SCHEMA.ENGINES
+WHERE engine = 'innodb'
+AND support IN ('YES', 'DEFAULT', 'ENABLED');
+COUNT(*)
+1
+FOUND 6 /InnoDB: Upgrading redo log:/ in mysqld.1.err
 # Minimal MariaDB 10.1.21 encrypted redo log
 # restart: --innodb-data-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption --innodb-log-group-home-dir=MYSQLTEST_VARDIR/tmp/log_corruption --innodb-force-recovery=5
 SELECT COUNT(*) `1` FROM INFORMATION_SCHEMA.ENGINES WHERE engine='innodb'

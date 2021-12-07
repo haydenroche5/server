@@ -457,8 +457,7 @@ void log_t::file::write_header_durable(lsn_t lsn)
   byte *buf= log_sys.checkpoint_buf;
   memset_aligned<4096>(buf, 0, 4096);
 
-  mach_write_to_4(buf + LOG_HEADER_FORMAT,
-                  ~FORMAT_ENCRYPTED & log_sys.log.format);
+  mach_write_to_4(buf + LOG_HEADER_FORMAT, FORMAT_10_8);
   mach_write_to_8(buf + LOG_HEADER_START_LSN, lsn);
   static constexpr const char LOG_HEADER_CREATOR_CURRENT[]=
     "MariaDB "

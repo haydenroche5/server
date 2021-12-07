@@ -68,17 +68,6 @@ enum store_t {
 };
 
 
-/** Adds data from a new log block to the parsing buffer of recv_sys if
-recv_sys.parse_start_lsn is non-zero.
-@param[in]	log_block	log block to add
-@param[in]	scanned_lsn	lsn of how far we were able to find
-				data in this log block
-@return true if more data added */
-bool recv_sys_add_to_parsing_buf(const byte* log_block, lsn_t scanned_lsn);
-
-/** Moves the parsing buffer data left to the buffer start */
-void recv_sys_justify_left_parsing_buf();
-
 /** Report an operation to create, delete, or rename a file during backup.
 @param[in]	space_id	tablespace identifier
 @param[in]	create		whether the file is being created
@@ -346,13 +335,6 @@ public:
   @param len      length of l, in bytes */
   inline void add(const page_id_t page_id, lsn_t start_lsn, lsn_t lsn,
                   const byte *l, size_t len);
-
-  /** Parse and register one log_t::FORMAT_10_5 mini-transaction.
-  @param checkpoint_lsn  the log sequence number of the latest checkpoint
-  @param store           whether to store the records
-  @return whether FILE_CHECKPOINT record was seen the first time,
-  or corruption was noticed */
-  bool parse(lsn_t checkpoint_lsn, store_t *store);
 
   enum parse_mtr_result { OK, PREMATURE_EOF, GOT_EOF };
 

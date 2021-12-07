@@ -2824,6 +2824,7 @@ skip:
 	return(FALSE);
 }
 
+#if 0 // FIXME
 /** Copy redo log blocks to the data sink.
 @param start_lsn	buffer start LSN
 @param end_lsn		buffer end LSN
@@ -2833,7 +2834,6 @@ skip:
 static lsn_t xtrabackup_copy_log(lsn_t start_lsn, lsn_t end_lsn, bool last)
 {
 	lsn_t	scanned_lsn	= start_lsn;
-#if 0 // FIXME
 	const byte* log_block = log_sys.buf;
 	bool more_data = false;
 
@@ -2900,9 +2900,9 @@ static lsn_t xtrabackup_copy_log(lsn_t start_lsn, lsn_t end_lsn, bool last)
 			return(0);
 		}
 	}
-#endif
 	return(scanned_lsn);
 }
+#endif
 
 /** Copy redo log until the current end of the log is reached
 @param last	whether we are copying the final part of the log
@@ -2929,6 +2929,7 @@ static bool xtrabackup_copy_logfile(bool last = false)
 			mysql_cond_wait(&wait_throttle, &log_sys.mutex);
 		}
 
+#if 0 // FIXME
 		lsn_t lsn= start_lsn;
 		for (int retries= 0; retries < 100; retries++) {
 			if (log_sys.log.read_log_seg(&lsn, end_lsn)
@@ -2940,20 +2941,18 @@ static bool xtrabackup_copy_logfile(bool last = false)
 		}
 
 		if (lsn == start_lsn) {
-#if 0 // FIXME
 			overwritten_block= !recv_sys.is_corrupt_log()
 				&& log_block_calc_checksum_crc32(log_sys.buf) ==
 					log_block_get_checksum(log_sys.buf)
 				&& log_block_get_hdr_no(log_sys.buf) >
 					log_block_convert_lsn_to_no(start_lsn);
-#endif
 			start_lsn = 0;
 		} else {
 			mysql_mutex_lock(&recv_sys.mutex);
 			start_lsn = xtrabackup_copy_log(start_lsn, lsn, last);
 			mysql_mutex_unlock(&recv_sys.mutex);
 		}
-
+#endif
 		if (!start_lsn) {
 			const char *reason = recv_sys.is_corrupt_log()
 				? "corrupt log."

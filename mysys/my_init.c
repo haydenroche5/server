@@ -96,14 +96,19 @@ static void reset_console_cp(void)
 static void setup_codepages()
 {
   UINT acp;
-  /*
-    Save console codepages, in case we change them,
-    to restore them on exit.
-  */
-  orig_console_cp= GetConsoleCP();
-  orig_console_output_cp= GetConsoleOutputCP();
-  if (orig_console_cp && orig_console_output_cp)
-    atexit(reset_console_cp);
+  BOOL is_a_tty= fileno(stdout) >= 0 && isatty(fileno(stdout));
+
+  if (is_a_tty)
+  {
+    /*
+      Save console codepages, in case we change them,
+      to restore them on exit.
+    */
+    orig_console_cp= GetConsoleCP();
+    orig_console_output_cp= GetConsoleOutputCP();
+    if (orig_console_cp && orig_console_output_cp)
+      atexit(reset_console_cp);
+  }
 
   if ((acp= GetACP()) != CP_UTF8)
     return;
@@ -114,11 +119,15 @@ static void setup_codepages()
   */
   setlocale(LC_ALL, "en_US.UTF8");
 
-  if (orig_console_cp == acp && orig_console_output_cp == acp)
-    return;
-  /* If ANSI codepage is UTF8, we actually want to switch console to it as well.*/
-  SetConsoleCP(acp);
-  SetConsoleOutputCP(acp);
+  if (is_a_tty && (orig_console_cp != acp || orig_console_output_cp != acp))
+  {
+    /*
+      If ANSI codepage is UTF8, we actually want to switch console
+      to it as well.
+    */
+    SetConsoleCP(acp);
+    SetConsoleOutputCP(acp);
+  }
 }
 #endif
 

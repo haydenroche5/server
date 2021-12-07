@@ -1016,14 +1016,14 @@ static dberr_t find_and_check_log_file(bool &log_file_found)
   header, checkpoint page 1, empty, checkpoint page 2, redo log page(s). */
   if (size < 1U << 20)
   {
-    sql_print_error("Log file %s is too small", logfile0);
+    sql_print_error("Log file %s is too small", logfile0.c_str());
     return DB_ERROR;
   }
 
   if (size % 512)
   {
     sql_print_error("Log file %s size %llu is not a multiple of 512 bytes",
-                    logfile0, size);
+                    logfile0.c_str(), size);
     return DB_ERROR;
   }
 

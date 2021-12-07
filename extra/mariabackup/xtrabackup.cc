@@ -2923,7 +2923,7 @@ static bool xtrabackup_copy_logfile(bool last = false)
 
 	start_lsn = ut_uint64_align_down(log_copy_scanned_lsn, 512);
 	do {
-		end_lsn = start_lsn + RECV_SCAN_SIZE;
+		end_lsn = start_lsn + recv_sys.MTR_SIZE_MAX;
 
 		if (xtrabackup_throttle && (io_ticket--) < 0) {
 			mysql_cond_wait(&wait_throttle, &log_sys.mutex);

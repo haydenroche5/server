@@ -3125,7 +3125,7 @@ lsn_t fil_names_clear(lsn_t lsn)
 	for (auto it = fil_system.named_spaces.begin();
 	     it != fil_system.named_spaces.end(); ) {
 		if (mtr.get_log()->size() + strlen(it->chain.start->name)
-		    >= RECV_SCAN_SIZE - (3 + 5)) {
+		    >= recv_sys.MTR_SIZE_MAX - (3 + 5)) {
 			/* Prevent log parse buffer overflow */
 			mtr.commit_files();
 			mtr.start();

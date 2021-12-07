@@ -1240,6 +1240,9 @@ same_space:
 	}
 }
 
+/** Size of the parsing buffer */
+constexpr size_t RECV_PARSING_BUF_SIZE{2U << 20};
+
 /** Clean up after recv_sys_t::create() */
 void recv_sys_t::close()
 {
@@ -3985,7 +3988,7 @@ static bool recv_scan_log_recs(
 		if (recv_sys.recovered_offset > RECV_PARSING_BUF_SIZE / 4
 		    || (recv_sys.recovered_offset
 			&& recv_sys.len
-			>= RECV_PARSING_BUF_SIZE - RECV_SCAN_SIZE)) {
+			>= RECV_PARSING_BUF_SIZE - recv_sys.MTR_SIZE_MAX)) {
 			/* Move parsing buffer data to the buffer start */
 			recv_sys_justify_left_parsing_buf();
 		}
@@ -4056,7 +4059,8 @@ recv_group_scan_log_recs(
 
 		start_lsn = ut_uint64_align_down(end_lsn, 512);
 		end_lsn = start_lsn;
-		log_sys.log.read_log_seg(&end_lsn, start_lsn + RECV_SCAN_SIZE);
+		log_sys.log.read_log_seg(&end_lsn,
+					 start_lsn + recv_sys_t::MTR_SIZE_MAX);
 	} while (end_lsn != start_lsn
 		 && !recv_scan_log_recs(&store, log_sys.buf, checkpoint_lsn,
 					start_lsn, end_lsn, contiguous_lsn,
@@ -4195,7 +4199,7 @@ static bool recv_scan_log(lsn_t checkpoint, bool last_phase)
 
     if (recv_sys.recovered_offset > RECV_PARSING_BUF_SIZE / 4 ||
         (recv_sys.recovered_offset &&
-         recv_sys.len >= RECV_PARSING_BUF_SIZE - RECV_SCAN_SIZE))
+         recv_sys.len >= RECV_PARSING_BUF_SIZE - recv_sys.MTR_SIZE_MAX))
     {
       const auto ofs= recv_sys.recovered_offset/* & ~4095*/;
       memmove/*_aligned<4096>*/(recv_sys.buf, recv_sys.buf + ofs,
@@ -4537,8 +4541,6 @@ dberr_t recv_recovery_from_checkpoint_start(lsn_t flush_lsn)
 	contiguous_lsn contains an lsn up to which the log is known to
 	be contiguously written. */
 	recv_sys.mlog_checkpoint_lsn = 0;
-
-	ut_ad(RECV_SCAN_SIZE <= srv_log_buffer_size);
 
 	ut_ad(recv_sys.pages.empty());
 	size_t sizeof_checkpoint;

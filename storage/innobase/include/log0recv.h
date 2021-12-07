@@ -222,6 +222,9 @@ private:
   during log scan or apply */
   bool found_corrupt_fs;
 public:
+  /** @return maximum guaranteed size of a mini-transaction on recovery */
+  static constexpr size_t MTR_SIZE_MAX{1U << 20};
+
   /** whether we are applying redo log records during crash recovery */
   bool recovery_on;
   /** whether recv_recover_page(), invoked from buf_page_t::read_complete(),
@@ -449,11 +452,3 @@ extern bool		recv_no_log_write;
 number (FIL_PAGE_LSN) is in the future.  Initially FALSE, and set by
 recv_recovery_from_checkpoint_start(). */
 extern bool		recv_lsn_checks_on;
-
-/** Size of the parsing buffer; it must accommodate RECV_SCAN_SIZE many
-times! */
-#define RECV_PARSING_BUF_SIZE	(2U << 20)
-
-/** Size of block reads when the log groups are scanned forward to do a
-roll-forward */
-#define RECV_SCAN_SIZE		(4U << srv_page_size_shift)

@@ -177,6 +177,7 @@ void buf_pool_t::insert_into_flush_list(buf_block_t *block, lsn_t lsn)
   mysql_mutex_assert_not_owner(&mutex);
   mysql_mutex_assert_owner(&log_sys.flush_order_mutex);
   ut_ad(lsn > 2);
+  static_assert(log_t::FIRST_LSN >= 2, "compatibility");
   ut_ad(!fsp_is_system_temporary(block->page.id().space()));
 
   mysql_mutex_lock(&flush_list_mutex);
@@ -1690,8 +1691,7 @@ inline void log_t::write_checkpoint(lsn_t end_lsn) noexcept
 
   mysql_mutex_unlock(&mutex);
   /* FIXME: issue an asynchronous write */
-  log.write((n & 1) ? LOG_CHECKPOINT_2 : LOG_CHECKPOINT_1,
-            {checkpoint_buf, 64});
+  log.write((n & 1) ? CHECKPOINT_2 : CHECKPOINT_1, {checkpoint_buf, 64});
   log.flush();
   mysql_mutex_lock(&log_sys.mutex);
 

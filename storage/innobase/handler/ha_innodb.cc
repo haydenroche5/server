@@ -19244,7 +19244,7 @@ static MYSQL_SYSVAR_ULONG(log_buffer_size, srv_log_buffer_size,
 static MYSQL_SYSVAR_ULONGLONG(log_file_size, srv_log_file_size,
   PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
   "Redo log size in bytes",
-  NULL, NULL, 96 << 20, 4096, std::numeric_limits<ulonglong>::max(), 4096);
+  NULL, NULL, 96 << 20, 1U << 20, std::numeric_limits<ulonglong>::max(), 4096);
 
 static MYSQL_SYSVAR_UINT(log_write_ahead_size, srv_log_write_ahead_size,
   PLUGIN_VAR_RQCMDARG,

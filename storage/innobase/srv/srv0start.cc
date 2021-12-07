@@ -98,6 +98,7 @@ Created 2/16/1996 Heikki Tuuri
 #include "btr0pcur.h"
 #include "zlib.h"
 #include "ut0crc32.h"
+#include "log.h"
 
 /** We are prepared for a situation that we have this many threads waiting for
 a transactional lock inside InnoDB. srv_start() sets the value. */
@@ -228,7 +229,7 @@ inline void log_t::create(lsn_t lsn) noexcept
   set_lsn(lsn);
   log.set_first_lsn(lsn);
   log.set_lsn(lsn);
-  log.set_lsn_offset(LOG_FILE_HDR_SIZE);
+  log.set_lsn_offset(START_OFFSET);
 
   buf_next_to_write= 0;
   write_lsn= lsn;
@@ -238,8 +239,7 @@ inline void log_t::create(lsn_t lsn) noexcept
 
   memset(buf, 0, srv_log_buffer_size);
   memset(flush_buf, 0, srv_log_buffer_size);
-  memset_aligned<OS_FILE_LOG_BLOCK_SIZE>(checkpoint_buf, 0,
-                                         OS_FILE_LOG_BLOCK_SIZE);
+  memset_aligned<4096>(checkpoint_buf, 0, 4096);
   log.write_header_durable(lsn);
 }
 
@@ -969,7 +969,7 @@ static lsn_t srv_prepare_to_delete_redo_log_file(bool old_exists)
 	DBUG_RETURN(flushed_lsn);
 }
 
-/** Tries to locate LOG_FILE_NAME and check it's size, etc
+/** Tries to locate ib_logfile0 check its size, etc.
 @param[out]	log_file_found	returns true here if correct file was found
 @return	dberr_t with DB_SUCCESS or some error */
 static dberr_t find_and_check_log_file(bool &log_file_found)
@@ -1004,34 +1004,29 @@ static dberr_t find_and_check_log_file(bool &log_file_found)
     return DB_ERROR;
 
   const os_offset_t size= stat_info.size;
-  ut_a(size != (os_offset_t) -1);
-
-  if (size % OS_FILE_LOG_BLOCK_SIZE)
-  {
-    ib::error() << "Log file " << logfile0 << " size " << size
-                << " is not a multiple of " << OS_FILE_LOG_BLOCK_SIZE
-                << " bytes";
-    return DB_ERROR;
-  }
 
   if (size == 0 && is_operation_restore())
   {
-    /* Tolerate an empty LOG_FILE_NAME from a previous run of
+    /* Tolerate an empty ib_logfile0 from a previous run of
     mariabackup --prepare. */
     return DB_NOT_FOUND;
   }
-  /* The first log file must consist of at least the following 512-byte pages:
-  header, checkpoint page 1, empty, checkpoint page 2, redo log page(s).
 
-  Mariabackup --prepare would create an empty LOG_FILE_NAME. Tolerate it. */
-  if (size == 0)
-    srv_start_after_restore= true;
-  else if (size <= OS_FILE_LOG_BLOCK_SIZE * 4)
+  /* The first log file must consist of at least the following 512-byte pages:
+  header, checkpoint page 1, empty, checkpoint page 2, redo log page(s). */
+  if (size < 1U << 20)
   {
-    ib::error() << "Log file " << logfile0 << " size " << size
-                << " is too small";
+    sql_print_error("Log file %s is too small", logfile0);
     return DB_ERROR;
   }
+
+  if (size % 512)
+  {
+    sql_print_error("Log file %s size %llu is not a multiple of 512 bytes",
+                    logfile0, size);
+    return DB_ERROR;
+  }
+
   srv_log_file_size= size;
 
   log_file_found= true;

@@ -138,19 +138,8 @@ and the creation time if the log file was created by mysqlbackup --restore,
 or the MySQL version that created the redo log file. */
 #define LOG_HEADER_CREATOR	16
 /** End of the log file creator field. */
-#define LOG_HEADER_CREATOR_END	(LOG_HEADER_CREATOR + 32)
+#define LOG_HEADER_CREATOR_END	48
 /* @} */
-
-#define LOG_CHECKPOINT_1	OS_FILE_LOG_BLOCK_SIZE
-					/* first checkpoint field in the log
-					header; we write alternately to the
-					checkpoint fields when we make new
-					checkpoints; this field is only defined
-					in the first log file of a log */
-#define LOG_CHECKPOINT_2	(3 * OS_FILE_LOG_BLOCK_SIZE)
-					/* second checkpoint field in the log
-					header */
-#define LOG_FILE_HDR_SIZE	(4 * OS_FILE_LOG_BLOCK_SIZE)
 
 /** Memory mapped file */
 class mapped_file_t
@@ -248,28 +237,36 @@ private:
 /** Redo log buffer */
 struct log_t{
   /** The original (not version-tagged) InnoDB redo log format */
-  static constexpr uint32_t FORMAT_3_23 = 0;
+  static constexpr uint32_t FORMAT_3_23= 0;
   /** The MySQL 5.7.9/MariaDB 10.2.2 log format */
-  static constexpr uint32_t FORMAT_10_2 = 1;
+  static constexpr uint32_t FORMAT_10_2= 1;
   /** The MariaDB 10.3.2 log format. */
-  static constexpr uint32_t FORMAT_10_3 = 103;
+  static constexpr uint32_t FORMAT_10_3= 103;
   /** The MariaDB 10.4.0 log format. */
-  static constexpr uint32_t FORMAT_10_4 = 104;
+  static constexpr uint32_t FORMAT_10_4= 104;
   /** Encrypted MariaDB redo log */
-  static constexpr uint32_t FORMAT_ENCRYPTED = 1U << 31;
+  static constexpr uint32_t FORMAT_ENCRYPTED= 1U << 31;
   /** The MariaDB 10.4.0 log format (only with innodb_encrypt_log=ON) */
-  static constexpr uint32_t FORMAT_ENC_10_4 = FORMAT_10_4 | FORMAT_ENCRYPTED;
+  static constexpr uint32_t FORMAT_ENC_10_4= FORMAT_10_4 | FORMAT_ENCRYPTED;
   /** The MariaDB 10.5.1 physical redo log format */
-  static constexpr uint32_t FORMAT_10_5 = 0x50485953;
+  static constexpr uint32_t FORMAT_10_5= 0x50485953;
   /** The MariaDB 10.5.1 physical format (only with innodb_encrypt_log=ON) */
-  static constexpr uint32_t FORMAT_ENC_10_5 = FORMAT_10_5 | FORMAT_ENCRYPTED;
+  static constexpr uint32_t FORMAT_ENC_10_5= FORMAT_10_5 | FORMAT_ENCRYPTED;
   /** The MariaDB 10.8.0 variable-block-size redo log format */
-  static constexpr uint32_t FORMAT_10_8 = 0x50687973;
+  static constexpr uint32_t FORMAT_10_8= 0x50687973;
   /** The MariaDB 10.8.0 format with innodb_encrypt_log=ON */
-  static constexpr uint32_t FORMAT_ENC_10_8 = FORMAT_10_8 | FORMAT_ENCRYPTED;
+  static constexpr uint32_t FORMAT_ENC_10_8= FORMAT_10_8 | FORMAT_ENCRYPTED;
 
-  /** smallest possible log sequence number in the current format */
-  static constexpr lsn_t FIRST_LSN= LOG_FILE_HDR_SIZE;
+  /** Location of the first checkpoint block */
+  static constexpr size_t CHECKPOINT_1= 4096;
+  /** Location of the second checkpoint block */
+  static constexpr size_t CHECKPOINT_2= 8192;
+  /** Start of record payload */
+  static constexpr lsn_t START_OFFSET= 12288;
+
+  /** smallest possible log sequence number in the current format
+  (used to be 2048 before FORMAT_10_8). */
+  static constexpr lsn_t FIRST_LSN= START_OFFSET;
 
 private:
   /** The log sequence number of the last change of durable InnoDB files */
@@ -351,7 +348,7 @@ public:
       return f == FORMAT_10_5 || f == FORMAT_10_8;
     }
     /** @return capacity in bytes */
-    lsn_t capacity() const{ return file_size - LOG_FILE_HDR_SIZE; }
+    lsn_t capacity() const{ return file_size - START_OFFSET; }
     /** Calculate the offset of a log sequence number.
     @param[in]	lsn	log sequence number
     @return offset within the log */
@@ -551,9 +548,9 @@ inline lsn_t log_t::file::calc_lsn_offset(lsn_t lsn) const
   lsn_t l= lsn - this->lsn;
   if (longlong(l) < 0)
     l= size - lsn_t(-longlong(l)) % size;
-  l+= lsn_offset - LOG_FILE_HDR_SIZE * (1 + lsn_offset / file_size);
+  l+= lsn_offset - START_OFFSET * (1 + lsn_offset / file_size);
   l%= size;
-  return l + LOG_FILE_HDR_SIZE * (1 + l / size);
+  return l + START_OFFSET * (1 + l / size);
 }
 
 inline void log_t::file::set_lsn(lsn_t a_lsn)

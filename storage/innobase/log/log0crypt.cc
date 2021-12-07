@@ -41,7 +41,7 @@ my_bool srv_encrypt_log;
 
 struct crypt_info_t {
 	uint32_t	checkpoint_no; /*!< checkpoint no; 32 bits */
-	uint32_t	key_version;   /*!< mysqld key version */
+	uint32_t	key_version;   /*!< key version */
 	/** random string for encrypting the key */
 	alignas(8) byte	crypt_msg[MY_AES_BLOCK_SIZE];
 	/** the secret key */
@@ -172,22 +172,22 @@ static ulint log_block_get_hdr_no(const byte *log_block)
 @return	whether the operation succeeded */
 ATTRIBUTE_COLD bool log_decrypt(byte* buf, lsn_t lsn, ulint size)
 {
-	ut_ad(size % OS_FILE_LOG_BLOCK_SIZE == 0);
-	ut_ad(ulint(buf) % OS_FILE_LOG_BLOCK_SIZE == 0);
+	ut_ad(!(size & 511));
+	ut_ad(!(ulint(buf) & 511));
 	ut_a(info.key_version);
 
 	alignas(8) byte aes_ctr_iv[MY_AES_BLOCK_SIZE];
 
 #define LOG_CRYPT_HDR_SIZE 4
-	lsn &= ~lsn_t(OS_FILE_LOG_BLOCK_SIZE - 1);
+	lsn &= ~lsn_t{511};
 
 	const bool has_encryption_key_rotation
 		= log_sys.log.format == log_t::FORMAT_ENC_10_4
 		|| log_sys.log.format == log_t::FORMAT_ENC_10_5;
 
 	for (const byte* const end = buf + size; buf != end;
-	     buf += OS_FILE_LOG_BLOCK_SIZE, lsn += OS_FILE_LOG_BLOCK_SIZE) {
-		alignas(4) byte dst[OS_FILE_LOG_BLOCK_SIZE - LOG_CRYPT_HDR_SIZE
+	     buf += 512, lsn += 512) {
+		alignas(4) byte dst[512 - LOG_CRYPT_HDR_SIZE
 				    - LOG_BLOCK_CHECKSUM];
 
 		/* The log block number is not encrypted. */
@@ -201,8 +201,7 @@ ATTRIBUTE_COLD bool log_decrypt(byte* buf, lsn_t lsn, ulint size)
 		ut_ad(log_block_get_start_lsn(lsn,
 					      log_block_get_hdr_no(buf))
 		      == lsn);
-		byte* key_ver = &buf[OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_KEY
-				     - LOG_BLOCK_CHECKSUM];
+		byte* key_ver = &buf[512 - LOG_BLOCK_KEY - LOG_BLOCK_CHECKSUM];
 
 		const size_t dst_size = has_encryption_key_rotation
 			? sizeof dst - LOG_BLOCK_KEY
@@ -223,8 +222,7 @@ ATTRIBUTE_COLD bool log_decrypt(byte* buf, lsn_t lsn, ulint size)
 		}
 
 		ut_ad(LOG_CRYPT_HDR_SIZE + dst_size
-		      == OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_CHECKSUM
-		      - LOG_BLOCK_KEY);
+		      == 512 - LOG_BLOCK_CHECKSUM - LOG_BLOCK_KEY);
 
 		uint dst_len;
 		int rc = encryption_crypt(
@@ -336,16 +334,16 @@ ATTRIBUTE_COLD bool log_crypt_101_read_block(byte* buf, lsn_t start_lsn)
 		return false;
 	}
 found:
-	byte dst[OS_FILE_LOG_BLOCK_SIZE];
+	byte dst[512];
 	uint dst_len;
 	byte aes_ctr_iv[MY_AES_BLOCK_SIZE];
 
-	const uint src_len = OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_HDR_SIZE;
+	const uint src_len = 512 - LOG_BLOCK_HDR_SIZE;
 
 	ulint log_block_no = log_block_get_hdr_no(buf);
 
 	/* The log block header is not encrypted. */
-	memcpy(dst, buf, LOG_BLOCK_HDR_SIZE);
+	memcpy(dst, buf, 512);
 
 	memcpy(aes_ctr_iv, info->crypt_nonce, 3);
 	mach_write_to_8(aes_ctr_iv + 3,
@@ -384,9 +382,11 @@ constexpr size_t LOG_CHECKPOINT_CRYPT_MESSAGE= 40;
 void log_crypt_write_header(byte *buf)
 {
   ut_ad(info.key_version);
-  mach_write_to_4(my_assume_aligned<4>(buf), info.key_version);
-  memcpy_aligned<4>(buf + 4, info.crypt_nonce, sizeof info.crypt_nonce);
+  mach_write_to_4(my_assume_aligned<4>(buf), LOG_DEFAULT_ENCRYPTION_KEY);
+  mach_write_to_4(my_assume_aligned<4>(buf + 4), info.key_version);
   memcpy_aligned<8>(buf + 8, info.crypt_msg, MY_AES_BLOCK_SIZE);
+  static_assert(MY_AES_BLOCK_SIZE == 16, "compatibility");
+  memcpy_aligned<4>(buf + 24, info.crypt_nonce, sizeof info.crypt_nonce);
 }
 
 /** Read the encryption information from a log header buffer.
@@ -396,9 +396,12 @@ bool log_crypt_read_header(const byte *buf)
 {
   MEM_UNDEFINED(&info.checkpoint_no, sizeof info.checkpoint_no);
   MEM_NOACCESS(&info.checkpoint_no, sizeof info.checkpoint_no);
-  info.key_version= mach_read_from_4(my_assume_aligned<4>(buf));
-  memcpy_aligned<4>(info.crypt_nonce, buf + 4, sizeof info.crypt_nonce);
+  if (mach_read_from_4(my_assume_aligned<4>(buf)) !=
+      LOG_DEFAULT_ENCRYPTION_KEY)
+    return false;
+  info.key_version= mach_read_from_4(my_assume_aligned<4>(buf + 4));
   memcpy_aligned<8>(info.crypt_msg, buf + 8, MY_AES_BLOCK_SIZE);
+  memcpy_aligned<4>(info.crypt_nonce, buf + 24, sizeof info.crypt_nonce);
   return init_crypt_key(&info);
 }
 

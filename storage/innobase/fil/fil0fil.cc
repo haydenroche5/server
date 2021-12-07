@@ -2769,8 +2769,8 @@ fil_io_t fil_space_t::io(const IORequest &type, os_offset_t offset, size_t len,
                          void *buf, buf_page_t *bpage)
 {
 	ut_ad(referenced());
-	ut_ad(offset % OS_FILE_LOG_BLOCK_SIZE == 0);
-	ut_ad((len % OS_FILE_LOG_BLOCK_SIZE) == 0);
+	ut_ad(offset % UNIV_ZIP_SIZE_MIN == 0);
+	ut_ad(len % 512 == 0); /* page_compressed */
 	ut_ad(fil_validate_skip());
 	ut_ad(type.is_read() || type.is_write());
 	ut_ad(type.type != IORequest::DBLWR_BATCH);

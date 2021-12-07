@@ -52,6 +52,7 @@ Created 12/9/1995 Heikki Tuuri
 #include "srv0mon.h"
 #include "buf0dump.h"
 #include "log0sync.h"
+#include "log.h"
 
 /*
 General philosophy of InnoDB redo-logs:
@@ -63,12 +64,9 @@ to the InnoDB redo log. */
 /** Redo log system */
 log_t	log_sys;
 
-/* A margin for free space in the log buffer before a log entry is catenated */
-#define LOG_BUF_WRITE_MARGIN	(4 * OS_FILE_LOG_BLOCK_SIZE)
-
 /* Margins for free space in the log buffer after a log entry is catenated */
 #define LOG_BUF_FLUSH_RATIO	2
-#define LOG_BUF_FLUSH_MARGIN	(LOG_BUF_WRITE_MARGIN		\
+#define LOG_BUF_FLUSH_MARGIN	((4 * 4096) /* cf. log_t::append_prepare() */ \
 				 + (4U << srv_page_size_shift))
 
 /** Extends the log buffer.
@@ -91,9 +89,9 @@ void log_buffer_extend(ulong len)
 		return;
 	}
 
-	ib::warn() << "The redo log transaction size " << len <<
-		" exceeds innodb_log_buffer_size="
-		<< srv_log_buffer_size << " / 2). Trying to extend it.";
+	sql_print_warning("InnoDB: The redo log transaction size %lu"
+			  " exceeds innodb_log_buffer_size=%lu",
+			  srv_log_buffer_size / 2);
 
 	byte* old_buf = log_sys.buf;
 	byte* old_flush_buf = log_sys.flush_buf;
@@ -101,8 +99,7 @@ void log_buffer_extend(ulong len)
 	srv_log_buffer_size = static_cast<ulong>(new_buf_size);
 	log_sys.buf = new_buf;
 	log_sys.flush_buf = new_flush_buf;
-	memcpy_aligned<OS_FILE_LOG_BLOCK_SIZE>(new_buf, old_buf,
-					       log_sys.buf_free);
+	memcpy_aligned<4096>(new_buf, old_buf, log_sys.buf_free);
 
 	log_sys.max_buf_free = new_buf_size / LOG_BUF_FLUSH_RATIO
 		- LOG_BUF_FLUSH_MARGIN;
@@ -112,8 +109,8 @@ void log_buffer_extend(ulong len)
 	ut_free_dodump(old_buf, old_buf_size);
 	ut_free_dodump(old_flush_buf, old_buf_size);
 
-	ib::info() << "innodb_log_buffer_size was extended to "
-		<< new_buf_size << ".";
+	sql_print_information("InnoDB: innodb_log_buffer_size was extended"
+			      " to %zu.", new_buf_size);
 }
 
 /** Calculate the recommended highest values for lsn - last_checkpoint_lsn
@@ -134,7 +131,7 @@ log_set_capacity(ulonglong file_size)
 	lsn_t		margin;
 	ulint		free;
 
-	lsn_t smallest_capacity = file_size - LOG_FILE_HDR_SIZE;
+	lsn_t smallest_capacity = file_size - log_t::START_OFFSET;
 	/* Add extra safety */
 	smallest_capacity -= smallest_capacity / 10;
 
@@ -188,7 +185,6 @@ void log_t::create()
   set_lsn(FIRST_LSN);
   set_flushed_lsn(FIRST_LSN);
 
-  ut_ad(srv_log_buffer_size >= 16 * OS_FILE_LOG_BLOCK_SIZE);
   ut_ad(srv_log_buffer_size >= 4U << srv_page_size_shift);
 
   buf= static_cast<byte*>(ut_malloc_dontdump(srv_log_buffer_size,
@@ -216,10 +212,8 @@ void log_t::create()
   n_pending_checkpoint_writes= 0;
 
   buf_free= 0;
-  checkpoint_buf= static_cast<byte*>
-    (aligned_malloc(OS_FILE_LOG_BLOCK_SIZE, OS_FILE_LOG_BLOCK_SIZE));
-  memset_aligned<OS_FILE_LOG_BLOCK_SIZE>(checkpoint_buf, 0,
-                                         OS_FILE_LOG_BLOCK_SIZE);
+  checkpoint_buf= static_cast<byte*>(aligned_malloc(4096, 4096));
+  memset_aligned<4096>(checkpoint_buf, 0, 4096);
 }
 
 mapped_file_t::~mapped_file_t() noexcept
@@ -458,13 +452,13 @@ static void log_block_store_checksum(byte* block)
 void log_t::file::write_header_durable(lsn_t lsn)
 {
   ut_ad(!recv_no_log_write);
-  ut_ad(log_sys.log.format == log_t::FORMAT_10_8 ||
-        log_sys.log.format == log_t::FORMAT_ENC_10_8);
+  ut_ad((~FORMAT_ENCRYPTED & log_sys.log.format) == FORMAT_10_8);
 
   byte *buf= log_sys.checkpoint_buf;
-  memset_aligned<OS_FILE_LOG_BLOCK_SIZE>(buf, 0, OS_FILE_LOG_BLOCK_SIZE);
+  memset_aligned<4096>(buf, 0, 4096);
 
-  mach_write_to_4(buf + LOG_HEADER_FORMAT, log_sys.log.format);
+  mach_write_to_4(buf + LOG_HEADER_FORMAT,
+                  ~FORMAT_ENCRYPTED & log_sys.log.format);
   mach_write_to_8(buf + LOG_HEADER_START_LSN, lsn);
   static constexpr const char LOG_HEADER_CREATOR_CURRENT[]=
     "MariaDB "
@@ -482,11 +476,11 @@ void log_t::file::write_header_durable(lsn_t lsn)
 
   DBUG_PRINT("ib_log", ("write " LSN_PF, lsn));
 
-  log_sys.log.write(0, {buf, OS_FILE_LOG_BLOCK_SIZE});
+  log_sys.log.write(0, {buf, 4096});
   if (!log_sys.log.writes_are_durable())
     log_sys.log.flush();
 
-  memset_aligned<OS_FILE_LOG_BLOCK_SIZE>(buf, 0, OS_FILE_LOG_BLOCK_SIZE);
+  memset_aligned<4096>(buf, 0, 4096);
 }
 
 void log_t::file::read(os_offset_t offset, span<byte> buf)

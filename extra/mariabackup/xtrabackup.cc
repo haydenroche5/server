@@ -2921,8 +2921,7 @@ static bool xtrabackup_copy_logfile(bool last = false)
 	recv_sys.parse_start_lsn = log_copy_scanned_lsn;
 	recv_sys.scanned_lsn = log_copy_scanned_lsn;
 
-	start_lsn = ut_uint64_align_down(log_copy_scanned_lsn,
-					 OS_FILE_LOG_BLOCK_SIZE);
+	start_lsn = ut_uint64_align_down(log_copy_scanned_lsn, 512);
 	do {
 		end_lsn = start_lsn + RECV_SCAN_SIZE;
 
@@ -4312,10 +4311,10 @@ static bool xtrabackup_backup_low()
 
 		if (recv_find_max_checkpoint(&max_cp_field) == DB_SUCCESS
 		    && log_sys.log.format != 0) {
-			if (max_cp_field == LOG_CHECKPOINT_1) {
+			if (max_cp_field == log_t::CHECKPOINT_1) {
 				log_sys.log.read(max_cp_field,
 						 {log_sys.checkpoint_buf,
-						  OS_FILE_LOG_BLOCK_SIZE});
+						  4096});
 			}
 #if 0
 			metadata_to_lsn = mach_read_from_8(
@@ -4540,7 +4539,7 @@ free_and_fail:
 		goto unlock_and_fail;
 	case log_t::FORMAT_10_5:
 	case log_t::FORMAT_ENC_10_5:
-		if (max_cp_field == LOG_CHECKPOINT_1) {
+		if (max_cp_field == 512) {
 			log_sys.log.read(max_cp_field, {buf, 512});
 		}
 		if (checkpoint_no_start != mach_read_from_8(buf)
@@ -4552,7 +4551,7 @@ free_and_fail:
 		break;
 	case log_t::FORMAT_10_8:
 	case log_t::FORMAT_ENC_10_8:
-		if (max_cp_field == LOG_CHECKPOINT_1) {
+		if (max_cp_field == log_t::CHECKPOINT_1) {
 			log_sys.log.read(max_cp_field, {buf, 64});
 		}
 		if (checkpoint_lsn_start != mach_read_from_8(buf)
@@ -4582,8 +4581,8 @@ free_and_fail:
 
 	/* label it */
 	byte* log_hdr_buf = static_cast<byte*>(
-		aligned_malloc(LOG_FILE_HDR_SIZE, OS_FILE_LOG_BLOCK_SIZE));
-	memset(log_hdr_buf, 0, LOG_FILE_HDR_SIZE);
+		aligned_malloc(4096, 4096));
+	memset(log_hdr_buf, 4096, 4096);
 
 	byte *log_hdr_field = log_hdr_buf;
 	mach_write_to_4(LOG_HEADER_FORMAT + log_hdr_field, log_sys.log.format);
@@ -4593,6 +4592,7 @@ free_and_fail:
 	mach_write_to_4(my_assume_aligned<4>(508 + log_hdr_field),
 			my_crc32c(0, log_hdr_field, 508));
 
+#if 0 // FIXME
 	/* copied from log_group_checkpoint() */
 	log_hdr_field +=
 		(log_sys.next_checkpoint_no & 1) ? LOG_CHECKPOINT_2 : LOG_CHECKPOINT_1;
@@ -4602,7 +4602,6 @@ free_and_fail:
 	we did choose freely, as LOG_FILE_HDR_SIZE. */
 	ut_ad(!((log_sys.log.get_lsn() ^ checkpoint_lsn_start)
 		& (OS_FILE_LOG_BLOCK_SIZE - 1)));
-#if 0 // FIXME
 	/* Adjust the checkpoint page. */
 	memcpy(log_hdr_field, log_sys.checkpoint_buf, OS_FILE_LOG_BLOCK_SIZE);
 	mach_write_to_8(log_hdr_field + LOG_CHECKPOINT_OFFSET,
@@ -4610,14 +4609,13 @@ free_and_fail:
 		| LOG_FILE_HDR_SIZE);
 	mach_write_to_4(my_assume_aligned<4>(508 + log_hdr_field),
 			my_crc32c(0, log_hdr_field, 508));
-#endif
 	/* Write log header*/
 	if (ds_write(dst_log_file, log_hdr_buf, LOG_FILE_HDR_SIZE)) {
 		msg("error: write to logfile failed");
 		aligned_free(log_hdr_buf);
 		goto free_and_fail;
 	}
-
+#endif
 	aligned_free(log_hdr_buf);
 	log_copying_running = true;
 	/* start io throttle */

@@ -38,11 +38,10 @@ Created 9/20/1997 Heikki Tuuri
 #define recv_recovery_is_on() UNIV_UNLIKELY(recv_sys.recovery_on)
 
 /** Find the latest checkpoint in the log header.
-@param[out]	max_field	LOG_CHECKPOINT_1 or LOG_CHECKPOINT_2
+@param[out]	max_field	checkpoint header offset
 @return error code or DB_SUCCESS */
-dberr_t
-recv_find_max_checkpoint(ulint* max_field)
-	MY_ATTRIBUTE((nonnull, warn_unused_result));
+dberr_t recv_find_max_checkpoint(ulint *max_field)
+  MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /** Apply any buffered redo log to a page that was just read from a data file.
 @param[in,out]	space	tablespace

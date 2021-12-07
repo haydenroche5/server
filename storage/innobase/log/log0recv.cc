@@ -1469,8 +1469,8 @@ bool log_t::file::read_log_seg(lsn_t* start_lsn, lsn_t end_lsn) noexcept
 	ulint	len;
 	bool success = true;
 	mysql_mutex_assert_owner(&log_sys.mutex);
-	ut_ad(!(*start_lsn % OS_FILE_LOG_BLOCK_SIZE));
-	ut_ad(!(end_lsn % OS_FILE_LOG_BLOCK_SIZE));
+	ut_ad(!(*start_lsn % 512));
+	ut_ad(!(end_lsn % 512));
 	byte* buf = log_sys.buf;
 loop:
 	lsn_t source_offset = calc_lsn_offset_old(*start_lsn);
@@ -1493,9 +1493,7 @@ loop:
 
 	recv_sys.read(source_offset, {buf, len});
 
-	for (ulint l = 0; l < len; l += OS_FILE_LOG_BLOCK_SIZE,
-		     buf += OS_FILE_LOG_BLOCK_SIZE,
-		     (*start_lsn) += OS_FILE_LOG_BLOCK_SIZE) {
+	for (ulint l = 0; l < len; l += 512, buf += 512, (*start_lsn) += 512) {
 		const ulint block_number = log_block_get_hdr_no(buf);
 
 		if (block_number != log_block_convert_lsn_to_no(*start_lsn)) {
@@ -1605,7 +1603,6 @@ inline uint32_t log_block_calc_checksum_format_0(const byte *b)
 ATTRIBUTE_COLD static dberr_t recv_log_recover_pre_10_2()
 {
   uint64_t max_no= 0;
-  byte *buf= log_sys.buf;
 
   ut_ad(log_sys.log.format == 0);
 
@@ -1625,20 +1622,19 @@ ATTRIBUTE_COLD static dberr_t recv_log_recover_pre_10_2()
 
   lsn_t lsn= 0;
 
-  for (ulint field= LOG_CHECKPOINT_1; field <= LOG_CHECKPOINT_2;
-       field += LOG_CHECKPOINT_2 - LOG_CHECKPOINT_1)
+  for (size_t field= 512; field < 2048; field+= 1024)
   {
-    log_sys.log.read(field, {buf, OS_FILE_LOG_BLOCK_SIZE});
+    const byte *buf= log_sys.checkpoint_buf + field;
 
     if (static_cast<uint32_t>(ut_fold_binary(buf, CHECKSUM_1)) !=
         mach_read_from_4(buf + CHECKSUM_1) ||
         static_cast<uint32_t>(ut_fold_binary(buf + CHECKPOINT_LSN,
                                              CHECKSUM_2 - CHECKPOINT_LSN)) !=
         mach_read_from_4(buf + CHECKSUM_2))
-     {
-       DBUG_LOG("ib_log", "invalid pre-10.2.2 checkpoint " << field);
-       continue;
-     }
+    {
+      DBUG_PRINT("ib_log", ("invalid pre-10.2.2 checkpoint %zu", field));
+      continue;
+    }
 
     if (!log_crypt_101_read_checkpoint(buf))
     {
@@ -1680,6 +1676,7 @@ ATTRIBUTE_COLD static dberr_t recv_log_recover_pre_10_2()
     "Upgrade after a crash is not supported."
     " This redo log was created before MariaDB 10.2.2";
 
+  byte *buf= log_sys.buf;
   recv_sys.read(source_offset & ~511, {buf, 512});
 
   if (log_block_calc_checksum_format_0(buf) !=
@@ -1718,7 +1715,8 @@ in an old redo log file (during upgrade check).
 @return byte offset within the log */
 inline lsn_t log_t::file::calc_lsn_offset_old(lsn_t lsn) const
 {
-  const lsn_t size= capacity() * recv_sys.files_size();
+  const lsn_t capacity= file_size - 2048;
+  const lsn_t size= capacity * recv_sys.files_size();
   lsn_t l= lsn - this->lsn;
   if (longlong(l) < 0)
   {
@@ -1726,9 +1724,9 @@ inline lsn_t log_t::file::calc_lsn_offset_old(lsn_t lsn) const
     l= size - l;
   }
 
-  l+= lsn_offset - LOG_FILE_HDR_SIZE * (1 + lsn_offset / file_size);
+  l+= lsn_offset - 2048 * (1 + lsn_offset / file_size);
   l%= size;
-  return l + LOG_FILE_HDR_SIZE * (1 + l / (file_size - LOG_FILE_HDR_SIZE));
+  return l + 2048 * (1 + l / capacity);
 }
 
 /** Determine if a redo log from MariaDB 10.2.2+, 10.3, or 10.4 is clean.
@@ -1746,8 +1744,7 @@ static dberr_t recv_log_recover_10_4()
 		return DB_CORRUPTION;
 	}
 
-	recv_sys.read(source_offset & ~(OS_FILE_LOG_BLOCK_SIZE - 1),
-		      {buf, OS_FILE_LOG_BLOCK_SIZE});
+	recv_sys.read(source_offset & ~511, {buf, 512});
 
 	if (!recv_check_log_block(buf)) {
 		sql_print_error("InnoDB: Invalid log header checksum");
@@ -1780,13 +1777,13 @@ static dberr_t recv_log_recover_10_4()
 }
 
 /** Find the latest checkpoint in the log header.
-@param[out]	max_field	LOG_CHECKPOINT_1 or LOG_CHECKPOINT_2
+@param[out]	max_field	checkpoint header offset
 @return error code or DB_SUCCESS */
 dberr_t recv_find_max_checkpoint(ulint *max_field)
 {
-  byte *buf= my_assume_aligned<OS_FILE_LOG_BLOCK_SIZE>(log_sys.checkpoint_buf);
+  byte *buf= my_assume_aligned<4096>(log_sys.checkpoint_buf);
   *max_field= 0;
-  log_sys.log.read(0, {buf, OS_FILE_LOG_BLOCK_SIZE});
+  log_sys.log.read(0, {buf, 4096});
   /* Check the header page checksum. There was no
   checksum in the first redo log format (version 0). */
   log_sys.log.format = mach_read_from_4(buf + LOG_HEADER_FORMAT);
@@ -1810,18 +1807,26 @@ dberr_t recv_find_max_checkpoint(ulint *max_field)
     sql_print_error("InnoDB: Unsupported redo log format."
                     " The redo log was created with %s.", creator);
     return DB_ERROR;
-  case log_t::FORMAT_10_8 | log_t::FORMAT_ENCRYPTED:
-    if (!log_crypt_read_header(buf + LOG_HEADER_CREATOR_END))
+  case log_t::FORMAT_10_8:
+    if (recv_sys.files_size() != 1 || (srv_log_file_size & 4095))
+    {
+      sql_print_error("InnoDB: Expecting only ib_logfile0 of correct size");
+      return DB_CORRUPTION;
+    }
+
+    if (!mach_read_from_4(buf + LOG_HEADER_CREATOR_END));
+    else if (!log_crypt_read_header(buf + LOG_HEADER_CREATOR_END))
     {
       sql_print_error("InnoDB: Reading log encryption info failed.");
       return DB_ERROR;
     }
-    /* fall through */
-  case log_t::FORMAT_10_8:
-    for (size_t field= LOG_CHECKPOINT_1; field <= LOG_CHECKPOINT_2;
-         field+= LOG_CHECKPOINT_2 - LOG_CHECKPOINT_1)
+    else
+      log_sys.log.format= log_t::FORMAT_ENC_10_8;
+
+    for (size_t field= log_t::CHECKPOINT_1; field <= log_t::CHECKPOINT_2;
+         field+= log_t::CHECKPOINT_2 - log_t::CHECKPOINT_1)
     {
-      log_sys.log.read(field, {buf, 64});
+      log_sys.log.read(field, {buf, 4096});
       if (my_crc32c(0, buf, 60) != mach_read_from_4(buf + 60))
       {
         DBUG_PRINT("ib_log", ("invalid checkpoint checksum at %zu", field));
@@ -1834,38 +1839,44 @@ dberr_t recv_find_max_checkpoint(ulint *max_field)
         *max_field= field;
         log_sys.log.set_lsn(checkpoint_lsn);
         log_sys.log.set_lsn_offset(mach_read_from_8(buf + 16));
-        log_sys.next_checkpoint_no= field == LOG_CHECKPOINT_1;
+        log_sys.next_checkpoint_no= field == log_t::CHECKPOINT_1;
       }
     }
     break;
+  case log_t::FORMAT_10_5:
+  case log_t::FORMAT_10_5 | log_t::FORMAT_ENCRYPTED:
+    if (recv_sys.files_size() != 1)
+    {
+      sql_print_error("InnoDB: Expecting only ib_logfile0 of correct size");
+      return DB_CORRUPTION;
+    }
+    /* fall through */
   case log_t::FORMAT_10_2:
   case log_t::FORMAT_10_2 | log_t::FORMAT_ENCRYPTED:
   case log_t::FORMAT_10_3:
   case log_t::FORMAT_10_3 | log_t::FORMAT_ENCRYPTED:
   case log_t::FORMAT_10_4:
   case log_t::FORMAT_10_4 | log_t::FORMAT_ENCRYPTED:
-  case log_t::FORMAT_10_5:
-  case log_t::FORMAT_10_5 | log_t::FORMAT_ENCRYPTED:
     uint64_t max_no= 0;
 
-    for (size_t field= LOG_CHECKPOINT_1; field <= LOG_CHECKPOINT_2;
-         field+= LOG_CHECKPOINT_2 - LOG_CHECKPOINT_1)
+    for (size_t field= 512; field < 2048; field += 1024)
     {
-      log_sys.log.read(field, {buf, 512});
-      if (!recv_check_log_block(buf))
+      const byte *b = buf + field;
+
+      if (!recv_check_log_block(b))
       {
         DBUG_PRINT("ib_log", ("invalid checkpoint checksum at %zu", field));
         continue;
       }
 
-      if (log_sys.is_encrypted() && !log_crypt_read_checkpoint_buf(buf))
+      if (log_sys.is_encrypted() && !log_crypt_read_checkpoint_buf(b))
       {
         sql_print_error("InnoDB: Reading checkpoint encryption info failed.");
         continue;
       }
 
-      const uint64_t checkpoint_no= mach_read_from_8(buf);
-      const lsn_t checkpoint_lsn= mach_read_from_8(buf + 8);
+      const uint64_t checkpoint_no= mach_read_from_8(b);
+      const lsn_t checkpoint_lsn= mach_read_from_8(b + 8);
       DBUG_PRINT("ib_log", ("checkpoint " UINT64PF " at " LSN_PF " found",
                             checkpoint_no, checkpoint_lsn));
 
@@ -1873,8 +1884,8 @@ dberr_t recv_find_max_checkpoint(ulint *max_field)
       {
         *max_field= field;
         log_sys.log.set_lsn(checkpoint_lsn);
-        log_sys.log.set_lsn_offset(mach_read_from_8(buf + 16));
-        log_sys.next_checkpoint_no= field == LOG_CHECKPOINT_1;
+        log_sys.log.set_lsn_offset(mach_read_from_8(b + 16));
+        log_sys.next_checkpoint_no= field == 512;
       }
     }
   }
@@ -3824,9 +3835,9 @@ static bool recv_scan_log_recs(
 	bool		more_data	= false;
 
 	const bool	last_phase = (*store == STORE_IF_EXISTS);
-	ut_ad(start_lsn % OS_FILE_LOG_BLOCK_SIZE == 0);
-	ut_ad(end_lsn % OS_FILE_LOG_BLOCK_SIZE == 0);
-	ut_ad(end_lsn >= start_lsn + OS_FILE_LOG_BLOCK_SIZE);
+	ut_ad(start_lsn % 512 == 0);
+	ut_ad(end_lsn % 512 == 0);
+	ut_ad(end_lsn >= start_lsn + 512);
 	ut_ad(log_sys.log.format == log_t::FORMAT_10_5
 	      || log_sys.log.format == log_t::FORMAT_ENC_10_5);
 	constexpr ulint sizeof_checkpoint= 12;
@@ -3914,8 +3925,7 @@ static bool recv_scan_log_recs(
 			parsing buffer if parse_start_lsn is already
 			non-zero */
 
-			if (recv_sys.len + 4 * OS_FILE_LOG_BLOCK_SIZE
-			    >= RECV_PARSING_BUF_SIZE) {
+			if (recv_sys.len + 4 * 512 >= RECV_PARSING_BUF_SIZE) {
 				ib::error() << "Log parsing buffer overflow."
 					" Recovery may have failed!";
 
@@ -3944,12 +3954,12 @@ static bool recv_scan_log_recs(
 			more_data = true;
 		}
 
-		if (data_len < OS_FILE_LOG_BLOCK_SIZE) {
+		if (data_len < 512) {
 			/* Log data for this group ends here */
 			finished = true;
 			break;
 		} else {
-			log_block += OS_FILE_LOG_BLOCK_SIZE;
+			log_block += 512;
 		}
 	} while (log_block < log_end);
 
@@ -4031,7 +4041,7 @@ recv_group_scan_log_recs(
 		? STORE_NO : (last_phase ? STORE_IF_EXISTS : STORE_YES);
 
 	log_sys.log.scanned_lsn = end_lsn = *contiguous_lsn =
-		ut_uint64_align_down(*contiguous_lsn, OS_FILE_LOG_BLOCK_SIZE);
+		ut_uint64_align_down(*contiguous_lsn, 512);
 	ut_d(recv_sys.after_apply = last_phase);
 
 	do {
@@ -4044,8 +4054,7 @@ recv_group_scan_log_recs(
 			end_lsn = recv_sys.recovered_lsn;
 		}
 
-		start_lsn = ut_uint64_align_down(end_lsn,
-						 OS_FILE_LOG_BLOCK_SIZE);
+		start_lsn = ut_uint64_align_down(end_lsn, 512);
 		end_lsn = start_lsn;
 		log_sys.log.read_log_seg(&end_lsn, start_lsn + RECV_SCAN_SIZE);
 	} while (end_lsn != start_lsn
@@ -4092,7 +4101,7 @@ static bool recv_scan_log(lsn_t checkpoint, bool last_phase)
     {
       // FIXME: use log_sys.buf (and srv_log_buffer_size)
       const auto source_offset=
-        log_sys.log.calc_lsn_offset_old(recv_sys.recovered_lsn + recv_sys.len);
+        log_sys.log.calc_lsn_offset(recv_sys.recovered_lsn + recv_sys.len);
       if (source_offset + size > log_sys.log.file_size)
         size= static_cast<size_t>(log_sys.log.file_size - source_offset);
 
@@ -4523,9 +4532,6 @@ dberr_t recv_recovery_from_checkpoint_start(lsn_t flush_lsn)
 	}
 
 	buf = log_sys.checkpoint_buf;
-	if (max_cp_field == LOG_CHECKPOINT_1) {
-		log_sys.log.read(max_cp_field, {buf, OS_FILE_LOG_BLOCK_SIZE});
-	}
 
 	/* Start reading the log from the checkpoint lsn. The variable
 	contiguous_lsn contains an lsn up to which the log is known to
@@ -4543,11 +4549,15 @@ dberr_t recv_recovery_from_checkpoint_start(lsn_t flush_lsn)
 		mysql_mutex_unlock(&log_sys.mutex);
 		return DB_SUCCESS;
 	default:
-		contiguous_lsn = checkpoint_lsn = mach_read_from_8(buf + 8);
+		contiguous_lsn = checkpoint_lsn
+			= mach_read_from_8(buf + max_cp_field + 8);
 		sizeof_checkpoint = 9/* size of MLOG_CHECKPOINT */;
 		goto completed;
 	case log_t::FORMAT_10_8:
 	case log_t::FORMAT_ENC_10_8:
+		if (max_cp_field == log_t::CHECKPOINT_1) {
+			log_sys.log.read(max_cp_field, {buf, 4096});
+		}
 		checkpoint_lsn = mach_read_from_8(buf);
 		end_lsn = mach_read_from_8(buf + 8);
 		if (end_lsn < checkpoint_lsn) {

@@ -1577,10 +1577,37 @@ static UINT mysql_charset_to_codepage(const char *my_cs_name)
   return cp;
 }
 
+
+static BOOL is_win10_1903_or_greater()
+{
+  OSVERSIONINFOEX version;
+  ULONGLONG condition= 0;
+
+  memset(&version, 0 , sizeof(version));
+  version.dwOSVersionInfoSize= sizeof(version);
+  version.dwMajorVersion= 10;
+  version.dwMinorVersion= 0;
+  version.dwBuildNumber= 18362;
+
+  VER_SET_CONDITION(condition, VER_MAJORVERSION, VER_GREATER_EQUAL);
+  VER_SET_CONDITION(condition, VER_MINORVERSION, VER_GREATER_EQUAL);
+  VER_SET_CONDITION(condition, VER_BUILDNUMBER, VER_GREATER_EQUAL);
+  return VerifyVersionInfo(
+             &version, VER_MAJORVERSION | VER_MINORVERSION | VER_BUILDNUMBER,
+             condition);
+}
+
+
 /** Set console codepage for MariaDB's charset name */
 int my_set_console_cp(const char *csname)
 {
   UINT cp;
+  if (!is_win10_1903_or_greater())
+  {
+    /* Setting console codepage can be flaky on old Windows.*/
+    return 0;
+  }
+
   if (fileno(stdout) < 0 || !isatty(fileno(stdout)))
     return 0;
   cp= mysql_charset_to_codepage(csname);

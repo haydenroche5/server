@@ -2035,13 +2035,6 @@ commit_one_phase_2(THD *thd, bool all, THD_TRANS *trans, bool is_real_trans)
   if (is_real_trans)
     DEBUG_SYNC(thd, "commit_one_phase_2");
 
-  error= binlog_online_alter_commit(thd, all);
-  if (error)
-  {
-    my_error(ER_ERROR_DURING_COMMIT, MYF(0), error);
-    error= 1;
-  }
-
   if (ha_info)
   {
     int err;
@@ -2186,8 +2179,6 @@ int ha_rollback_trans(THD *thd, bool all)
     trans->ha_list= 0;
     trans->no_2pc=0;
   }
-
-  binlog_online_alter_rollback(thd, all);
 
 #ifdef WITH_WSREP
   if (thd->is_error())
@@ -2877,8 +2868,6 @@ int ha_rollback_to_savepoint(THD *thd, SAVEPOINT *sv)
     ha_info->reset(); /* keep it conveniently zero-filled */
   }
   trans->ha_list= sv->ha_list;
-
-  binlog_online_alter_rollback(thd, !thd->in_sub_stmt);
 
   if (thd->m_transaction_psi != NULL)
     MYSQL_INC_TRANSACTION_ROLLBACK_TO_SAVEPOINT(thd->m_transaction_psi, 1);
@@ -7011,6 +7000,10 @@ static int binlog_log_row_online_alter(TABLE* table,
     // Use transaction cache directly, if it is not multi-transaction mode
     table->online_alter_cache= binlog_get_cache_data(cache_mngr,
                                         !thd->in_multi_stmt_transaction_mode());
+
+    trans_register_ha(thd, false, binlog_hton, 0);
+    if (thd->in_multi_stmt_transaction_mode())
+      trans_register_ha(thd, true, binlog_hton, 0);
   }
 
   // We need to log all columns for the case if alter table changes primary key.

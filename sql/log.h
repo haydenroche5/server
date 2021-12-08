@@ -1327,8 +1327,6 @@ Rows_log_event* binlog_get_pending_rows_event(binlog_cache_mngr *cache_mngr,
 binlog_cache_mngr *online_alter_binlog_get_cache_mngr(THD *thd, TABLE *table);
 binlog_cache_data* binlog_get_cache_data(binlog_cache_mngr *cache_mngr,
                                          bool use_trans_cache);
-int binlog_online_alter_commit(THD *thd, bool all);
-void binlog_online_alter_rollback(THD *thd, bool all);
 
 extern MYSQL_PLUGIN_IMPORT MYSQL_BIN_LOG mysql_bin_log;
 extern handlerton *binlog_hton;

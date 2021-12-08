@@ -2126,6 +2126,8 @@ binlog_online_alter_cleanup(ilist<binlog_cache_mngr> &list,
   }
 }
 
+static int cache_copy(IO_CACHE *to, IO_CACHE *from);
+
 /**
   This function is called once after each statement.
 
@@ -2141,6 +2143,54 @@ int binlog_commit(THD *thd, bool all, bool ro_1pc)
   int error= 0;
   PSI_stage_info org_stage;
   DBUG_ENTER("binlog_commit");
+
+  bool is_ending_transaction= ending_trans(thd, all);
+  for (auto &cache_mngr: thd->online_alter_cache_list)
+  {
+    auto *binlog= cache_mngr.share->online_alter_binlog;
+    DBUG_ASSERT(binlog);
+
+    error= binlog_flush_pending_rows_event(thd,
+                                           /*
+                                             do not set STMT_END for last event
+                                             to leave table open in altering thd
+                                           */
+                                           false,
+                                           true,
+                                           binlog,
+                                           is_ending_transaction
+                                           ? &cache_mngr.trx_cache
+                                           : &cache_mngr.stmt_cache);
+    if (is_ending_transaction)
+    {
+      mysql_mutex_lock(binlog->get_log_lock());
+      error= binlog->write_cache(thd, &cache_mngr.trx_cache.cache_log);
+
+      mysql_mutex_unlock(binlog->get_log_lock());
+    }
+    else
+    {
+      error= cache_copy(&cache_mngr.trx_cache.cache_log,
+                        &cache_mngr.stmt_cache.cache_log);
+    }
+
+    if (error)
+    {
+      my_error(ER_ERROR_ON_WRITE, MYF(ME_ERROR_LOG),
+               binlog->get_name(), errno);
+      binlog_online_alter_cleanup(thd->online_alter_cache_list,
+                                  is_ending_transaction);
+      DBUG_RETURN(error);
+    }
+  }
+
+  binlog_online_alter_cleanup(thd->online_alter_cache_list,
+                              is_ending_transaction);
+
+  for (TABLE *table= thd->open_tables; table; table= table->next)
+  {
+    table->online_alter_cache= NULL;
+  }
 
   binlog_cache_mngr *const cache_mngr= thd->binlog_get_cache_mngr();
   /*
@@ -2193,7 +2243,7 @@ int binlog_commit(THD *thd, bool all, bool ro_1pc)
      - We are in a transaction and a full transaction is committed.
     Otherwise, we accumulate the changes.
   */
-  if (likely(!error) && ending_trans(thd, all))
+  if (likely(!error) && is_ending_transaction)
   {
     bool is_xa_prepare= is_preparing_xa(thd);
 
@@ -2233,12 +2283,26 @@ static int binlog_rollback(handlerton *hton, THD *thd, bool all)
 {
   DBUG_ENTER("binlog_rollback");
 
+  bool is_ending_trans= ending_trans(thd, all);
+
+  bool rollback_online= !thd->online_alter_cache_list.empty();
+  /*
+    This is a crucial moment that we are running through
+    thd->online_alter_cache_list, and not through thd->open_tables to cleanup
+    stmt cache, though both have it. The reason is that the tables can be closed
+    to that moment in case of an error.
+    The same reason applies to the fact we don't store cache_mngr in the table
+    itself -- because it can happen to be not existing.
+    Still in case if tables are left opened
+   */
+  binlog_online_alter_cleanup(thd->online_alter_cache_list, is_ending_trans);
+
   int error= 0;
   binlog_cache_mngr *const cache_mngr= thd->binlog_get_cache_mngr();
 
   if (!cache_mngr)
   {
-    DBUG_ASSERT(WSREP(thd));
+    DBUG_ASSERT(WSREP(thd) || rollback_online);
     DBUG_ASSERT(thd->lex->sql_command != SQLCOM_XA_ROLLBACK);
 
     DBUG_RETURN(0);
@@ -7436,81 +7500,6 @@ int cache_copy(IO_CACHE *to, IO_CACHE *from)
   DBUG_RETURN(0);
 }
 
-int binlog_online_alter_commit(THD *thd, bool all)
-{
-  DBUG_ENTER("online_alter_commit");
-
-  if (thd->online_alter_cache_list.empty())
-    DBUG_RETURN(0);
-
-  int error= 0;
-  bool is_ending_transaction= ending_trans(thd, all);
-
-  for (auto &cache_mngr: thd->online_alter_cache_list)
-  {
-    auto *binlog= cache_mngr.share->online_alter_binlog;
-    DBUG_ASSERT(binlog);
-
-    error= binlog_flush_pending_rows_event(thd,
-                                           /*
-                                             do not set STMT_END for last event
-                                             to leave table open in altering thd
-                                           */
-                                           false,
-                                           true,
-                                           binlog,
-                                           is_ending_transaction
-                                           ? &cache_mngr.trx_cache
-                                           : &cache_mngr.stmt_cache);
-    if (is_ending_transaction)
-    {
-      mysql_mutex_lock(binlog->get_log_lock());
-      error= binlog->write_cache(thd, &cache_mngr.trx_cache.cache_log);
-
-      mysql_mutex_unlock(binlog->get_log_lock());
-    }
-    else
-    {
-      error= cache_copy(&cache_mngr.trx_cache.cache_log,
-                        &cache_mngr.stmt_cache.cache_log);
-    }
-
-    if (error)
-    {
-      my_error(ER_ERROR_ON_WRITE, MYF(ME_ERROR_LOG),
-               binlog->get_name(), errno);
-      binlog_online_alter_cleanup(thd->online_alter_cache_list,
-                                  is_ending_transaction);
-      DBUG_RETURN(error);
-    }
-  }
-
-  binlog_online_alter_cleanup(thd->online_alter_cache_list,
-                              is_ending_transaction);
-
-  for (TABLE *table= thd->open_tables; table; table= table->next)
-  {
-    table->online_alter_cache= NULL;
-  }
-  DBUG_RETURN(error);
-}
-
-void binlog_online_alter_rollback(THD *thd, bool all)
-{
-  bool is_ending_trans= ending_trans(thd, all);
-
-  /*
-    This is a crucial moment that we are running through
-    thd->online_alter_cache_list, and not through thd->open_tables to cleanup
-    stmt cache, though both have it. The reason is that the tables can be closed
-    to that moment in case of an error.
-    The same reason applies to the fact we don't store cache_mngr in the table
-    itself -- because it can happen to be not existing.
-    Still in case if tables are left opened
-   */
-  binlog_online_alter_cleanup(thd->online_alter_cache_list, is_ending_trans);
-}
-
 /*
   Write the contents of a cache to the binary log.
 
@@ -12111,7 +12100,3 @@ void wsrep_register_binlog_handler(THD *thd, bool trx)
 }
 
 #endif /* WITH_WSREP */
-
-handlerton online_alter_hton{};
-
-

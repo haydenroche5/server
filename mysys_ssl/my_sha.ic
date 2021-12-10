@@ -29,6 +29,9 @@
 #define HASH_SIZE (NUM > 1 ? NUM/8 : 20)
 
 #if defined(HAVE_WOLFSSL)
+#if defined(HAVE_EXTERNAL_WOLFSSL)
+#include <wolfssl/options.h>
+#endif
 #define WOLFSSL_SHA512
 #define WOLFSSL_SHA384
 #define WOLFSSL_SHA224

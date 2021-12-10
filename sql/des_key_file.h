@@ -17,6 +17,9 @@
 #define DES_KEY_FILE_INCLUDED
 
 #ifdef HAVE_OPENSSL
+#ifdef HAVE_EXTERNAL_WOLFSSL
+#include <wolfssl/options.h>
+#endif
 #include <openssl/des.h>
 
 #include "violite.h"                /* DES_cblock, DES_key_schedule */

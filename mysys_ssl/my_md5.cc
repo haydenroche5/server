@@ -28,6 +28,9 @@
 #include <stdarg.h>
 
 #if defined(HAVE_WOLFSSL)
+#if defined(HAVE_EXTERNAL_WOLFSSL)
+#include <wolfssl/options.h>
+#endif
 #include <wolfssl/wolfcrypt/md5.h>
 #include <ssl_compat.h>
 typedef wc_Md5 EVP_MD_CTX;

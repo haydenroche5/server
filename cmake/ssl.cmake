@@ -37,6 +37,8 @@
 
 SET(WITH_SSL_DOC "bundled (use wolfssl)")
 SET(WITH_SSL_DOC
+  "${WITH_SSL_DOC}, external_wolfssl (use an externally installed wolfssl)")
+SET(WITH_SSL_DOC
   "${WITH_SSL_DOC}, yes (prefer os library if present, otherwise use bundled)")
 SET(WITH_SSL_DOC
   "${WITH_SSL_DOC}, system (use os library)")
@@ -45,6 +47,24 @@ SET(WITH_SSL_DOC
 
 MACRO (CHANGE_SSL_SETTINGS string)
   SET(WITH_SSL ${string} CACHE STRING ${WITH_SSL_DOC} FORCE)
+ENDMACRO()
+
+MACRO (MYSQL_USE_EXTERNAL_WOLFSSL)
+  find_path(WOLFSSL_INCLUDE_DIR wolfssl/version.h)
+  SET(INC_DIRS
+    ${WOLFSSL_INCLUDE_DIR}
+    ${WOLFSSL_INCLUDE_DIR}/wolfssl
+  )
+  SET(SSL_LIBRARIES wolfssl)
+  SET(SSL_INCLUDE_DIRS ${INC_DIRS})
+  SET(SSL_DEFINES "-DHAVE_OPENSSL -DHAVE_WOLFSSL -DHAVE_EXTERNAL_WOLFSSL")
+  SET(HAVE_ERR_remove_thread_state ON CACHE INTERNAL "wolfssl doesn't have ERR_remove_thread_state")
+  SET(HAVE_EncryptAes128Ctr OFF CACHE INTERNAL "wolfssl does support AES-CTR, but differently from openssl")
+  SET(HAVE_EncryptAes128Gcm OFF CACHE INTERNAL "wolfssl does not support AES-GCM")
+  SET(HAVE_X509_check_host ON CACHE INTERNAL  "wolfssl does support X509_check_host")
+  CHANGE_SSL_SETTINGS("external_wolfssl")
+  ADD_SUBDIRECTORY(extra/external_wolfssl)
+  MESSAGE_ONCE(SSL_LIBRARIES "SSL_LIBRARIES = ${SSL_LIBRARIES}")
 ENDMACRO()
 
 MACRO (MYSQL_USE_BUNDLED_SSL)
@@ -107,6 +127,8 @@ MACRO (MYSQL_CHECK_SSL)
       UNSET(OPENSSL_SSL_LIBRARY)
       UNSET(OPENSSL_SSL_LIBRARY CACHE)
     ENDIF()
+  ELSEIF(WITH_SSL STREQUAL "external_wolfssl")
+    MYSQL_USE_EXTERNAL_WOLFSSL()
   ELSEIF(WITH_SSL STREQUAL "system" OR
          WITH_SSL STREQUAL "yes" OR
          WITH_SSL_PATH

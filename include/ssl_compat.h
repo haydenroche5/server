@@ -14,6 +14,9 @@
  along with this program; if not, write to the Free Software
  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
+#ifdef HAVE_EXTERNAL_WOLFSSL
+#include <wolfssl/options.h>
+#endif
 #include <openssl/opensslv.h>
 
 /* OpenSSL version specific definitions */
@@ -73,6 +76,9 @@
 #define EVP_MD_CTX_SIZE                 sizeof(EVP_MD_CTX)
 #endif
 
+#ifdef HAVE_WOLFSSL
+#undef DH_set0_pqg
+#endif
 #define DH_set0_pqg(D,P,Q,G)            ((D)->p= (P), (D)->g= (G))
 #define EVP_CIPHER_CTX_buf_noconst(ctx) ((ctx)->buf)
 #define EVP_CIPHER_CTX_encrypting(ctx)  ((ctx)->encrypt)

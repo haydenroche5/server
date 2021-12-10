@@ -148,6 +148,9 @@ int vio_getnameinfo(const struct sockaddr *sa,
 typedef my_socket YASSL_SOCKET_T;
 #define YASSL_SOCKET_T_DEFINED
 #define template _template /* bug in WolfSSL 4.4.0, see also my_crypt.cc */
+#ifdef HAVE_EXTERNAL_WOLFSSL
+#include <wolfssl/options.h>
+#endif
 #include <openssl/ssl.h>
 #undef template
 #include <openssl/err.h>
